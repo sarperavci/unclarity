@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "unclarity"
+version = "0.1.0"
+description = "Generate synthetic Microsoft Clarity sessions (browserless) from Python"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mypy>=1.11"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/unclarity"]
+
+[tool.mypy]
+strict = true
+
+[tool.ruff]
+line-length = 120
