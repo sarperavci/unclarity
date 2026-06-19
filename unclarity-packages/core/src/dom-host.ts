@@ -36,6 +36,8 @@ export interface Session {
   move(selector: string): void;
   /** Dispatch a mousemove at raw viewport coordinates (used to play realism paths). */
   moveTo(x: number, y: number): void;
+  /** Viewport-coordinate box of an element (from the geometry oracle). */
+  locate(selector: string): { x: number; y: number; width: number; height: number };
   click(selector: string): void;
   scrollTo(y: number): void;
   type(selector: string, text: string): void;
@@ -124,6 +126,10 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
     moveTo(x, y) {
       const el = window.document.elementFromPoint(x, y) ?? window.document.body;
       mouse("mousemove", el, x, y);
+    },
+    locate(selector) {
+      const r = require(selector).getBoundingClientRect();
+      return { x: r.left, y: r.top, width: r.width, height: r.height };
     },
     click(selector) {
       const el = require(selector);
