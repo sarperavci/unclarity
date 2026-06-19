@@ -11,3 +11,6 @@ export { installTransport } from "./transport.js";
 export type { UploadRecord, TransportOptions } from "./transport.js";
 export { loadBundle, authorBundle, validateBundle, writeBundle } from "./bundle.js";
 export type { LoadedBundle, BundleManifest, GeometryMode, AuthorOptions } from "./bundle.js";
+export { Rng } from "./prng.js";
+export { decimate, mousePath, clickPlacement, typingPlan, pickArchetype, ARCHETYPES } from "./realism.js";
+export type { PathPoint, KeyPlan, ArchetypeName } from "./realism.js";

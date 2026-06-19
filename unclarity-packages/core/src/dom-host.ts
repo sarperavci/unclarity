@@ -34,6 +34,8 @@ export interface Session {
   readonly bundleSource: "pinned" | "live" | "fork";
   readonly uploadLog: UploadRecord[];
   move(selector: string): void;
+  /** Dispatch a mousemove at raw viewport coordinates (used to play realism paths). */
+  moveTo(x: number, y: number): void;
   click(selector: string): void;
   scrollTo(y: number): void;
   type(selector: string, text: string): void;
@@ -117,6 +119,10 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
     move(selector) {
       const el = require(selector);
       const { x, y } = center(el);
+      mouse("mousemove", el, x, y);
+    },
+    moveTo(x, y) {
+      const el = window.document.elementFromPoint(x, y) ?? window.document.body;
       mouse("mousemove", el, x, y);
     },
     click(selector) {
