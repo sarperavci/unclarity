@@ -1,0 +1,23 @@
+{
+  "name": "@unclarity/capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline, one-time Playwright capture of any page (auth-aware) into a replayable Bundle",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@unclarity/core": "file:../core",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "clarity-decode": "^0.8.65",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
+  }
+}

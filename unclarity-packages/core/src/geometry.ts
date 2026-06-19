@@ -52,6 +52,10 @@ export function installGeometryOracle(window: DOMWindow, opts: GeometryOptions):
     node = walker.nextNode();
   }
 
+  // Strip the join key now that the WeakMap is built — a leaked data-uc-id would be captured by
+  // clarity as a per-node attribute (a synthetic tell).
+  for (const { el } of ordered) el.removeAttribute?.("data-uc-id");
+
   const scrollX = (): number => (window.pageXOffset as number) || 0;
   const scrollY = (): number => (window.pageYOffset as number) || 0;
   const DEFAULT: Box = { x: 16, y: 0, width: 1200, height: 24 };

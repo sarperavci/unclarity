@@ -9,3 +9,5 @@ export { installGeometryOracle } from "./geometry.js";
 export type { Box, GeometryMap, GeometryOptions } from "./geometry.js";
 export { installTransport } from "./transport.js";
 export type { UploadRecord, TransportOptions } from "./transport.js";
+export { loadBundle, authorBundle, validateBundle, writeBundle } from "./bundle.js";
+export type { LoadedBundle, BundleManifest, GeometryMode, AuthorOptions } from "./bundle.js";

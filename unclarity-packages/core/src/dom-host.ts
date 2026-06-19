@@ -4,6 +4,7 @@ import type { DeviceProfile } from "./device-profile.js";
 import { applyProfile, profileHeaders } from "./device-profile.js";
 import { installShims, assertReady, setScroll } from "./shims.js";
 import { installGeometryOracle, type GeometryMap } from "./geometry.js";
+import type { LoadedBundle } from "./bundle.js";
 import { installTransport, type UploadRecord } from "./transport.js";
 import type { ClarityBundleProvider } from "./clarity-provider.js";
 import { force, sleep } from "./util.js";
@@ -12,10 +13,12 @@ const COLLECT = "https://t.clarity.ms/collect";
 
 export interface SessionOptions {
   projectId: string;
-  html: string;
   url: string;
   profile: DeviceProfile;
   provider: ClarityBundleProvider;
+  // Page source: either raw HTML, or a loaded Bundle (manifest + geometry). One is required.
+  html?: string;
+  bundle?: LoadedBundle;
   // Where clarity uploads. A string URL exercises the real XHR/gzip transport (default: real
   // ingestion). A callback receives the raw encoded payload (the no-forge seam, used for offline tests).
   upload?: string | ((payload: string) => void);
@@ -41,19 +44,22 @@ export interface Session {
 }
 
 export async function createSession(opts: SessionOptions): Promise<Session> {
+  const html = opts.html ?? opts.bundle?.html;
+  if (html === undefined) throw new Error("unclarity: createSession requires `html` or `bundle`");
   const version = await opts.provider.resolveVersion(opts.projectId);
   const source = await opts.provider.fetchLibrary(version);
-  const viewport = opts.viewport ?? { width: 1280, height: 800 };
-  const docHeight = opts.docHeight ?? 3000;
+  const viewport = opts.viewport ?? opts.bundle?.manifest.viewport ?? { width: 1280, height: 800 };
+  const docHeight = opts.docHeight ?? opts.bundle?.manifest.docHeight ?? 3000;
+  const geometry = opts.geometry ?? opts.bundle?.geometry;
   const origin = new URL(opts.url).origin;
 
   const vc = new VirtualConsole();
-  const dom = new JSDOM(opts.html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc });
+  const dom = new JSDOM(html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc });
   const { window } = dom;
 
   installShims(window);
   applyProfile(window, opts.profile);
-  installGeometryOracle(window, { viewport, docHeight, ...(opts.geometry ? { byId: opts.geometry } : {}) });
+  installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
   const transport = installTransport(window, {
     headers: profileHeaders(opts.profile, origin, opts.url),
     ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
