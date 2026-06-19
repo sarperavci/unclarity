@@ -1,0 +1,26 @@
+{
+  "name": "@unclarity/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browserless runtime that drives Microsoft's real clarity.js to generate synthetic Clarity sessions",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "jsdom": "^29.1.1",
+    "undici": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.0.0",
+    "clarity-decode": "0.8.65",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
