@@ -38,6 +38,14 @@ function secChUa(brands: readonly UaBrand[]): string {
   return brands.map((b) => `"${b.brand}";v="${b.version}"`).join(", ");
 }
 
+// Minutes a zone is ahead of UTC (positive = ahead). Uses the real Intl, before any realm patch.
+function tzOffsetMinutes(timezone: string): number {
+  const now = new Date();
+  const utc = new Date(now.toLocaleString("en-US", { timeZone: "UTC" }));
+  const local = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  return Math.round((local.getTime() - utc.getTime()) / 60000);
+}
+
 // Identity headers our transport must send so they stay coherent with navigator.
 export function profileHeaders(profile: DeviceProfile, origin: string, referer: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -91,6 +99,20 @@ export function applyProfile(window: DOMWindow, profile: DeviceProfile): void {
   force(window.screen, "width", profile.screen.width);
   force(window.screen, "height", profile.screen.height);
   force(window.screen, "colorDepth", profile.screen.colorDepth);
+  // Timezone coherence: clarity/analytics may read Intl + Date offset. Override both consistently.
+  try {
+    const offsetMin = -tzOffsetMinutes(profile.timezone);
+    const RealDTF = window.Intl.DateTimeFormat;
+    const patched = function (this: unknown, locale?: string | string[], options?: Intl.DateTimeFormatOptions) {
+      return new RealDTF(locale, { timeZone: profile.timezone, ...options });
+    } as unknown as typeof Intl.DateTimeFormat;
+    force(window.Intl, "DateTimeFormat", patched);
+    force(window.Date.prototype, "getTimezoneOffset", function (): number {
+      return offsetMin;
+    });
+  } catch {
+    /* timezone shim best-effort */
+  }
   if (profile.uaData) {
     const brands = profile.uaData.brands.map((b) => ({ ...b }));
     const high = {
@@ -120,7 +142,63 @@ const CHROME_BRANDS: UaBrand[] = [
   { brand: "Not_A Brand", version: "24" },
 ];
 
+const EDGE_VERSION = "132";
+const EDGE_BRANDS: UaBrand[] = [
+  { brand: "Microsoft Edge", version: EDGE_VERSION },
+  { brand: "Chromium", version: EDGE_VERSION },
+  { brand: "Not_A Brand", version: "24" },
+];
+const PIXEL_BRANDS: UaBrand[] = [
+  { brand: "Google Chrome", version: CHROME_VERSION },
+  { brand: "Chromium", version: CHROME_VERSION },
+  { brand: "Not_A Brand", version: "24" },
+];
+
 export const PRESETS: Record<string, DeviceProfile> = {
+  "win11-edge": {
+    id: "win11-edge",
+    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${EDGE_VERSION}.0.0.0 Safari/537.36 Edg/${EDGE_VERSION}.0.0.0`,
+    platform: "Win32",
+    vendor: "Google Inc.",
+    language: "en-US",
+    languages: ["en-US", "en"],
+    hardwareConcurrency: 12,
+    maxTouchPoints: 0,
+    deviceMemory: 8,
+    screen: { width: 1920, height: 1080, colorDepth: 24 },
+    devicePixelRatio: 1,
+    timezone: "America/New_York",
+    uaData: { brands: EDGE_BRANDS, mobile: false, platform: "Windows", platformVersion: "15.0.0", uaFullVersion: `${EDGE_VERSION}.0.0.0`, architecture: "x86", bitness: "64" },
+  },
+  "iphone15-safari": {
+    id: "iphone15-safari",
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    platform: "iPhone",
+    vendor: "Apple Computer, Inc.",
+    language: "en-US",
+    languages: ["en-US", "en"],
+    hardwareConcurrency: 6,
+    maxTouchPoints: 5,
+    screen: { width: 393, height: 852, colorDepth: 24 },
+    devicePixelRatio: 3,
+    timezone: "America/Los_Angeles",
+    // Safari: no userAgentData (forces navigator.platform fallback), no deviceMemory.
+  },
+  "pixel8-chrome": {
+    id: "pixel8-chrome",
+    userAgent: `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Mobile Safari/537.36`,
+    platform: "Linux armv8l",
+    vendor: "Google Inc.",
+    language: "en-US",
+    languages: ["en-US", "en"],
+    hardwareConcurrency: 8,
+    maxTouchPoints: 5,
+    deviceMemory: 8,
+    screen: { width: 412, height: 915, colorDepth: 24 },
+    devicePixelRatio: 2.625,
+    timezone: "Europe/London",
+    uaData: { brands: PIXEL_BRANDS, mobile: true, platform: "Android", platformVersion: "14.0.0", uaFullVersion: `${CHROME_VERSION}.0.0.0`, architecture: "", bitness: "" },
+  },
   "win11-chrome": {
     id: "win11-chrome",
     userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`,

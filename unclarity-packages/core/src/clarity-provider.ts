@@ -16,6 +16,31 @@ export class VersionFetchFailed extends Error {
   }
 }
 
+export interface TagConfig {
+  version: string;
+  upload: string;
+  cookies: string[];
+  dob: number | undefined;
+}
+
+// Parse the live tag bootstrap so synthetic sessions mirror the project's real config (upload
+// endpoint, cookie list, dob sampling) instead of guessed defaults. Fidelity directive.
+export async function parseTagConfig(projectId: string): Promise<TagConfig> {
+  const res = await request(TAG_URL(projectId));
+  const body = await res.body.text();
+  if (res.statusCode !== 200) throw new VersionFetchFailed(`tag fetch for ${projectId} returned ${res.statusCode}`, body);
+  const version = VERSION_RE.exec(body)?.[1];
+  if (!version) throw new VersionFetchFailed(`could not parse clarity version from tag for ${projectId}`, body);
+  const upload = /"upload"\s*:\s*"([^"]+)"/.exec(body)?.[1] ?? "https://t.clarity.ms/collect";
+  const dobRaw = /"dob"\s*:\s*([0-9]+)/.exec(body)?.[1];
+  const cookiesRaw = /"cookies"\s*:\s*\[([^\]]*)\]/.exec(body)?.[1] ?? "";
+  const cookies = cookiesRaw
+    .split(",")
+    .map((s) => s.trim().replace(/^"|"$/g, ""))
+    .filter(Boolean);
+  return { version, upload, cookies, dob: dobRaw ? Number(dobRaw) : undefined };
+}
+
 export interface ClarityBundleProvider {
   resolveVersion(projectId: string): Promise<string>;
   fetchLibrary(version: string): Promise<string>;
