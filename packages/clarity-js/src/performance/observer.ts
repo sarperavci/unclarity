@@ -65,7 +65,7 @@ function process(entries: PerformanceEntryList): void {
             case Constant.Resource:
                 let name = entry.name;
                 dimension.log(Dimension.NetworkHosts, host(name));
-                if (name === config.upload || name === config.fallback) { metric.max(Metric.UploadTime, entry.duration); }
+                if (isUploadUrl(name)) { metric.max(Metric.UploadTime, entry.duration); }
                 break;
             case Constant.LongTask:
                 metric.count(Metric.LongTaskCount);
@@ -103,10 +103,18 @@ export function stop(): void {
 let anchorCache: HTMLAnchorElement | null = null;
 
 function host(url: string): string {
+    return resolve(url).host;
+}
+
+function isUploadUrl(name: string): boolean {
+    return (typeof config.upload === Constant.String && name === resolve(config.upload as string).href) ||
+        (typeof config.fallback === Constant.String && name === resolve(config.fallback as string).href);
+}
+
+function resolve(url: string): HTMLAnchorElement {
     if (!anchorCache) {
         anchorCache = document.createElement("a");
     }
-
     anchorCache.href = url;
-    return anchorCache.host;
+    return anchorCache;
 }
