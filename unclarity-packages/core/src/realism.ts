@@ -34,7 +34,7 @@ export function mousePath(from: { x: number; y: number }, to: { x: number; y: nu
   const raw: PathPoint[] = [];
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+    const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2; // easeInOutQuad
     const jitter = i === 0 || i === steps ? 0 : rng.gaussian(0, 1.5);
     raw.push({
       x: Math.round(from.x + (to.x - from.x) * ease + jitter),

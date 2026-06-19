@@ -107,9 +107,7 @@ export function applyProfile(window: DOMWindow, profile: DeviceProfile): void {
       return new RealDTF(locale, { timeZone: profile.timezone, ...options });
     } as unknown as typeof Intl.DateTimeFormat;
     force(window.Intl, "DateTimeFormat", patched);
-    force(window.Date.prototype, "getTimezoneOffset", function (): number {
-      return offsetMin;
-    });
+    force(window.Date.prototype, "getTimezoneOffset", (): number => offsetMin);
   } catch {
     /* timezone shim best-effort */
   }

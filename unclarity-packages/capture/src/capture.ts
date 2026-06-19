@@ -62,7 +62,7 @@ function snapshot(): RawCapture {
     }
   }
   return {
-    html: "<!DOCTYPE html>" + document.documentElement.outerHTML,
+    html: `<!DOCTYPE html>${document.documentElement.outerHTML}`,
     geometry,
     viewport: { width: window.innerWidth, height: window.innerHeight },
     docHeight: document.documentElement.scrollHeight,

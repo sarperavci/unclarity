@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unclarity.dev/schemas/scenario.json",
+  "title": "Scenario",
+  "type": "object",
+  "required": ["steps"],
+  "additionalProperties": false,
+  "properties": {
+    "steps": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "object", "required": ["type", "ms"], "additionalProperties": false, "properties": { "type": { "const": "wait" }, "ms": { "type": "integer", "minimum": 0 } } },
+          { "type": "object", "required": ["type", "selector"], "additionalProperties": false, "properties": { "type": { "const": "move" }, "selector": { "type": "string" } } },
+          { "type": "object", "required": ["type", "selector"], "additionalProperties": false, "properties": { "type": { "const": "click" }, "selector": { "type": "string" } } },
+          { "type": "object", "required": ["type", "y"], "additionalProperties": false, "properties": { "type": { "const": "scrollTo" }, "y": { "type": "integer" } } },
+          { "type": "object", "required": ["type", "selector", "text"], "additionalProperties": false, "properties": { "type": { "const": "type" }, "selector": { "type": "string" }, "text": { "type": "string" } } }
+        ]
+      }
+    }
+  }
+}

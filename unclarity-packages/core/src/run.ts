@@ -64,7 +64,7 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
   const { dispatcher, egress } = dispatcherFor(index, req.network?.proxy);
   const profileObj = preset(req.profile);
   const bundle = req.bundleDir ? await loadBundle(req.bundleDir) : undefined;
-  let geometryMode: string | undefined = bundle?.manifest.geometryMode;
+  const geometryMode: string | undefined = bundle?.manifest.geometryMode;
 
   const session = await createSession({
     projectId: req.projectId,

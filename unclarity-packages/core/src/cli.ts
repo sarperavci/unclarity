@@ -12,7 +12,7 @@ function readStdin(): Promise<string> {
 }
 
 function emit(obj: unknown): void {
-  process.stdout.write(JSON.stringify(obj) + "\n");
+  process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
 
 function parseFlags(argv: string[]): Record<string, string> {
@@ -23,7 +23,7 @@ function parseFlags(argv: string[]): Record<string, string> {
       out[a.slice(2)] = argv[i + 1] ?? "";
       i++;
     } else if (a?.startsWith("-o")) {
-      out["out"] = argv[i + 1] ?? "";
+      out.out = argv[i + 1] ?? "";
       i++;
     }
   }
@@ -44,8 +44,8 @@ async function main(): Promise<void> {
     process.exit(failed > 0 ? 1 : 0);
   } else if (cmd === "capture") {
     const flags = parseFlags(process.argv.slice(3));
-    const url = process.argv[3] && !process.argv[3].startsWith("-") ? process.argv[3] : flags["url"];
-    if (!url || !flags["out"]) {
+    const url = process.argv[3] && !process.argv[3].startsWith("-") ? process.argv[3] : flags.url;
+    if (!url || !flags.out) {
       process.stderr.write("usage: unclarity capture <url> -o <dir> [--steps file.json] [--storage-state file]\n");
       process.exit(2);
     }
@@ -56,8 +56,8 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     const { readFileSync } = await import("node:fs");
-    const steps = flags["steps"] ? JSON.parse(readFileSync(flags["steps"], "utf8")) : undefined;
-    const manifest = await capture.capture({ url, outDir: flags["out"], ...(steps ? { steps } : {}), ...(flags["storage-state"] ? { storageState: flags["storage-state"] } : {}) });
+    const steps = flags.steps ? JSON.parse(readFileSync(flags.steps, "utf8")) : undefined;
+    const manifest = await capture.capture({ url, outDir: flags.out, ...(steps ? { steps } : {}), ...(flags["storage-state"] ? { storageState: flags["storage-state"] } : {}) });
     emit({ type: "captured", manifest });
   } else {
     process.stderr.write("usage: unclarity <run|capture>\n");

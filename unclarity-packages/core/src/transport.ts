@@ -42,7 +42,7 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
   const baseHeaders = (extra: Record<string, string>): Record<string, string> => {
     const h: Record<string, string> = { ...opts.headers, ...extra };
     const c = cookie();
-    if (c) h["cookie"] = c;
+    if (c) h.cookie = c;
     return h;
   };
 

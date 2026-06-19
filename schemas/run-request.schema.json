@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unclarity.dev/schemas/run-request.json",
+  "title": "RunRequest",
+  "type": "object",
+  "required": ["projectId", "url", "profile", "scenario", "count", "concurrency", "seed"],
+  "additionalProperties": false,
+  "properties": {
+    "projectId": { "type": "string", "minLength": 1 },
+    "url": { "type": "string", "format": "uri" },
+    "bundleDir": { "type": "string" },
+    "html": { "type": "string" },
+    "profile": { "type": "string", "enum": ["win11-chrome", "win11-edge", "iphone15-safari", "pixel8-chrome"] },
+    "scenario": { "$ref": "scenario.json" },
+    "count": { "type": "integer", "minimum": 1 },
+    "concurrency": { "type": "integer", "minimum": 1, "maximum": 16 },
+    "seed": { "type": "integer" },
+    "upload": { "type": "string" },
+    "clarity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "source": { "enum": ["pinned", "live"] }, "version": { "type": "string" } }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "proxy": {
+          "type": "object",
+          "required": ["url"],
+          "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string" },
+            "pool": { "type": "array", "items": { "type": "string" } },
+            "rotate": { "enum": ["per-session", "per-run", "sticky"] }
+          }
+        }
+      }
+    }
+  }
+}
