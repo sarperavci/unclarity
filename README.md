@@ -1,94 +1,95 @@
-> ## 🌫️ This is the `unclarity` fork
-> This repository extends [microsoft/clarity](https://github.com/microsoft/clarity) with **unclarity** —
-> a tool that generates **synthetic Clarity sessions browserlessly** by driving Microsoft's real
-> `clarity.js` inside a Node DOM shim (no payload forging). It adds page replication (manual + Playwright
-> capture), device fingerprints, a seeded realism engine, and **Node + Python** APIs.
->
-> **The upstream packages under `packages/` are kept pristine.** All new code lives in
-> `unclarity-packages/` and `python/`. See **[UNCLARITY.md](./UNCLARITY.md)** for usage and design.
->
-> *The original Microsoft Clarity README follows.*
+# unclarity 🌫️
 
----
+> The evil twin of Microsoft Clarity — it drives Microsoft's **own** `clarity.js`, browserless, to mint **synthetic** analytics sessions that look completely real in the Clarity dashboard.
 
-# Clarity
-Clarity is an open-source behavioral analytics library written in typescript, with two key goals: privacy & performance. 
+## What is this?
 
-It helps you understand how users view and use your website across all modern devices and browsers. Understanding how users navigate, interact and browse your website can provide new insights about your users. Empathizing with your users and seeing where features fail or succeed can help improve your product, grow revenue and improve user retention.
+[Microsoft Clarity](https://clarity.microsoft.com) is a behavioral-analytics library: you drop `clarity.js` on a page, a real visitor browses, and their session — browser, device, OS, page geometry, heatmaps, session replay — shows up in your dashboard.
 
-It's the same code that powers Microsoft's hosted behavioral analytics solution: <a href="https://clarity.microsoft.com">https://clarity.microsoft.com</a>. If you would like to see a demo of how it works, checkout <a href="https://clarity.microsoft.com/demo/projects/view/3t0wlogvdz/impressions?date=Last%203%20days">live demo</a>. 
+**unclarity** is its mischievous extension. It produces those exact same sessions **without a visitor and without a browser at runtime**. It takes Microsoft's *real, unmodified* `clarity.js`, runs it inside a Node DOM realm, replays a page plus a sequence of user actions against it, and lets the genuine library do its job: encode, compress, and upload. The result is a synthetic session that is indistinguishable from an organic one in the Clarity UI.
 
-We encourage the community to join us in building the best behavioral analytics library, that puts privacy first and prioritizes performance. 
+Crucially: **there is no payload forging.** unclarity never hand-writes a fake telemetry blob — it runs the authentic `encode → compress → upload` pipeline, so every payload is valid by construction. An evil twin, but a well-behaved one under the hood: strictly-typed, golden-vector-tested, and deterministic.
 
-## Project Structure
-1. **[clarity-js](https://github.com/microsoft/clarity/tree/master/packages/clarity-js)**: Instrumentation code that goes on the website and tracks user interactions as well as layout changes.
+## How it works
 
-2. **[clarity-decode](https://github.com/microsoft/clarity/tree/master/packages/clarity-decode)**: Code, which usually runs on the server, decodes incoming data back into its original format.
+```
+Bundle  (a page: DOM + CSS + per-node geometry)
+  ├─ author by hand (primary)        authorBundle() / unclarity bundle
+  └─ capture any URL (offline, 1×)   @unclarity/capture (Playwright, auth-aware)
+        │
+        ▼
+Session  (pure Node — no browser at runtime)
+  jsdom realm + browser shims + DeviceProfile + geometry oracle
+  + Microsoft's real clarity.js  (PinnedCdn default / LiveCdn)
+        │
+        ▼
+Real encoded uploads → t.clarity.ms/collect  →  appears in your Clarity dashboard
+```
 
-3. **[clarity-visualize](https://github.com/microsoft/clarity/tree/master/packages/clarity-visualize)**: It takes the decoded data from clarity-decode and turns it back into pixel-perfect session replay.
+You first obtain a **Bundle** — a self-contained page snapshot (DOM, CSS, per-node geometry). Author one by hand, or capture any real URL once, offline, with the auth-aware Playwright capturer. From then on sessions run in **pure Node, no browser**: a jsdom realm with browser shims, a device profile, and a geometry oracle, hosting the genuine `clarity.js`.
 
-4. **[clarity-devtools](https://github.com/microsoft/clarity/tree/master/packages/clarity-devtools)**: Devtools extension for chromium based browsers to generate live captures against any website.
+Making Microsoft's library run unmodified took some hard-won jsdom work — shimming `document.adoptedStyleSheets` (without it the whole DOM is dropped), normalizing synthetic event `timeStamp` to be `performance.timeOrigin`-relative (else payloads are rejected), and supplying a geometry oracle (jsdom has no layout engine).
 
-## Releasing new version
-1. **Bump Version**
-   ```bash
-   yarn bump-version
-   ```
+## Capabilities
 
-2. **Submit Changes**
-    * Commit updated files
-    * Push changes
-    * Create PR
+- **Page replication** — author a Bundle by hand, or capture any URL offline (one browser run, auth-aware) and replay it forever browserless.
+- **Device fingerprints & presets** — coherent viewport, UA, client hints, DPR, touch. Presets: `win11-chrome`, `win11-edge`, `iphone15-safari`, `pixel8-chrome`.
+- **Seeded realism engine** — scripted scroll/click/type with decimated human mouse paths and gaussian click placement; `seed` makes userId/sessionId reproducible.
+- **Full byte-level determinism** — `deterministic: true` engages a VirtualClock that virtualizes `setTimeout`/`performance`/`Date`/`Math.random`; the same seed yields **byte-identical payloads** run to run (and runs fast, since virtual time skips real waits).
+- **HTTP + SOCKS proxies** — HTTP/HTTPS via undici `ProxyAgent`, SOCKS4/5 (`socks://`) via a TLS-upgrading agent; pools rotate egress IP per session.
+- **Node + Python APIs** — first-class on both, parity enforced by frozen golden vectors.
+- **Always-latest, safely** — `PinnedCdn` (default, reproducible) or `LiveCdn`; a CI **compatibility canary** detects new Clarity versions, auto-PRs a bump when still compatible, and opens a drift issue (never silently degrades) when not.
 
-## Examples
-Here are some example sessions on popular websites visualized to demonstrate the telemetry captured:
-1. CNN (Web)
-</br><a href="https://thumbs.gfycat.com/AggressiveLankyAbyssiniangroundhornbill-size_restricted.gif"><img src="https://thumbs.gfycat.com/AggressiveLankyAbyssiniangroundhornbill-size_restricted.gif" title="Clarity - CNN Example"/></a>
+## Node
 
-2. Cook with Manali (Mobile)
-</br><a href="https://thumbs.gfycat.com/CoolDependableAdamsstaghornedbeetle-size_restricted.gif"><img src="https://thumbs.gfycat.com/CoolDependableAdamsstaghornedbeetle-size_restricted.gif" title="Clarity - Cook With Manali Example"/></a> 
+```ts
+import { run, scenario, preset, PinnedCdn } from "@unclarity/core";
 
-## Privacy Notice
-Clarity handles sensitive data with care. By default sensitive content on the page is masked before uploading to the server. Additionally, Clarity offers several masking configuration options to ensure you are in full control of your data.
+// one-time, offline:  npx unclarity capture https://shop.example.com/p -o ./bundle --device win11-chrome
+const sc = scenario().scrollTo(600).click("#add-to-cart").type("#search", "headphones").build();
 
-## Claude Code Setup (Optional)
-If you're using [Claude Code](https://claude.ai/claude-code) for development, this repository includes:
-
-1. **`CLAUDE.md`** - Project context and development guidelines automatically loaded by Claude
-2. **`.mcp.json`** - MCP (Model Context Protocol) server configuration for enhanced Git operations
-
-### Prerequisites for MCP Server
-1. Install Python 3:
-   ```bash
-   python3 --version  # Verify installation
-   ```
-
-2. Install the Git MCP Server:
-   ```bash
-   pip3 install mcp-server-git
-   ```
-
-### Enable MCP Server
-The repository includes a `.mcp.json` file that configures the Git MCP server. To enable it:
-
-**Option 1: Auto-enable (Recommended)**
-Add to your `.claude/settings.local.json`:
-```json
-{
-  "enableAllProjectMcpServers": true
+for await (const r of run({
+  projectId: "xxxxxxxxxx",
+  url: "https://shop.example.com/p",
+  bundleDir: "./bundle",          // or html: "<!doctype html>…"
+  profile: "win11-chrome",
+  scenario: sc,
+  count: 50, concurrency: 8, seed: 42,
+  clarity: { source: "pinned", version: "0.8.65" },
+  network: { proxy: { pool: ["socks5://user:pass@host:1080"], rotate: "per-session" } },
+})) {
+  console.log(r.index, r.verdict, r.clarityVersion);
 }
 ```
 
-**Option 2: Explicit approval**
-Claude Code will prompt you to approve the MCP server on first use.
+## Python
 
-### What It Provides
-- **CLAUDE.md**: Persistent instructions for Claude including build commands, testing, architecture, and coding standards
-- **Git MCP Server**: Enhanced Git operations through natural language (commit history, diffs, branch management, etc.)
+```python
+from unclarity import Unclarity, scenario, preset
 
-## Improving Clarity
-If you haven't already done so, start contributing by following instructions **[here](https://github.com/microsoft/clarity/blob/master/CONTRIBUTING.md)**.
+uc = Unclarity()
+sc = scenario().scroll_to(600).click("#add-to-cart").type("#search", "headphones")
+for r in uc.run(project_id="xxxxxxxxxx", url="https://shop.example.com/p",
+                bundle_dir="./bundle", profile=preset("win11-chrome"),
+                scenario=sc, count=50, concurrency=8, seed=42).stream():
+    print(r.index, r.verdict)
+# async:  async for r in uc.run(...).astream(): ...
+```
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+The Python wheel spawns the Node CLI and exchanges newline-delimited JSON over stdio (`UNCLARITY_NODE` / `UNCLARITY_CLI` override discovery).
 
-Happy coding!
+## Built on Microsoft Clarity
+
+This repository is a **fork of [microsoft/clarity](https://github.com/microsoft/clarity)**. The upstream packages under [`packages/`](./packages) are kept **byte-for-byte pristine** and consumed as-is; everything unclarity adds lives in [`unclarity-packages/`](./unclarity-packages) (TypeScript: core + capture) and [`python/`](./python). A weekly workflow syncs upstream so the reference + `LocalFork` provider stay current.
+
+- 📦 This repo: **https://github.com/sarperavci/unclarity**
+- 🔬 Upstream: **https://github.com/microsoft/clarity**
+- 📖 Deep docs & design: **[UNCLARITY.md](./UNCLARITY.md)**
+
+## Responsible use
+
+unclarity is for **testing and debugging your own Clarity projects** — verifying dashboards, exercising heatmaps, building reproducible analytics fixtures. Point it at projects you own, keep volume modest, and don't use it to pollute or attack third-party analytics. Be a good evil twin.
+
+---
+
+<sub>The original Microsoft Clarity README is preserved at [`README.clarity.md`](./README.clarity.md).</sub>
