@@ -1,4 +1,5 @@
 import { ProxyAgent, type Dispatcher } from "undici";
+import { socksDispatcher } from "./socks.js";
 import { createSession } from "./dom-host.js";
 import { loadBundle } from "./bundle.js";
 import { preset } from "./device-profile.js";
@@ -54,8 +55,9 @@ function dispatcherFor(index: number, proxy: ProxyConfig | undefined): { dispatc
   if (!proxy) return {};
   const pool = proxy.pool && proxy.pool.length > 0 ? proxy.pool : [proxy.url];
   const url = proxy.rotate === "per-session" ? pool[index % pool.length]! : pool[0]!;
-  if (url.startsWith("socks")) throw new Error("SOCKS proxy not yet supported (http/https only)");
-  return { dispatcher: new ProxyAgent(url), egress: url.replace(/:\/\/[^@]*@/, "://***@") };
+  const egress = url.replace(/:\/\/[^@]*@/, "://***@");
+  const dispatcher = url.startsWith("socks") ? socksDispatcher(url) : new ProxyAgent(url);
+  return { dispatcher, egress };
 }
 
 async function runOne(req: RunRequest, index: number, provider: ClarityBundleProvider): Promise<SessionResult> {
