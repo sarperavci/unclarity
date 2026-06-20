@@ -84,12 +84,28 @@ cookie/dob config for fidelity.
 - Seeded PRNG with frozen golden vectors (Node ↔ Python parity).
 - All test/runner commands run under the machine's `safetest` memory wrapper.
 
+## Determinism & identity
+
+Pass `seed` to make a session's **userId/sessionId reproducible** (seeded `crypto.getRandomValues`;
+`crypto.subtle` stays real). The PRNG and realism generators are fully deterministic. Full
+session-level *byte* determinism (timestamps) still needs a VirtualClock — planned.
+
+## Proxies
+
+`network.proxy` accepts HTTP/HTTPS (undici `ProxyAgent`) **and SOCKS4/5** (`socks://`,
+tunnelled via a custom undici `Agent` with TLS upgrade). A `pool` with `rotate: "per-session"`
+gives each session a different egress IP.
+
+## Capture devices
+
+`capture({ device: "iphone15-safari" })` sets viewport, UA, DPR, and mobile/touch coherently
+(also `--device` on the CLI). Presets: `win11-chrome`, `win11-edge`, `iphone15-safari`,
+`pixel8-chrome`.
+
 ## Known limitations
 
-- **Session-level byte determinism** needs a VirtualClock (planned). Today the PRNG and realism
-  generators are fully deterministic; wall-clock timestamps and crypto ids still vary per run.
-- Capture is **single desktop viewport** in v1; replicates a *captured/authored state*, not arbitrary
-  post-scroll/lazy geometry.
-- Proxy: HTTP/HTTPS via undici `ProxyAgent`; SOCKS is not yet wired.
+- Capture replicates a *captured/authored state* at the chosen viewport — not arbitrary
+  post-scroll/lazy geometry. Multi-keyframe SPA capture is a future extension.
+- Full byte-identical session determinism awaits a VirtualClock (timestamps vary per run today).
 
 This is a testing/debugging tool for your **own** Clarity projects. Keep volume modest.

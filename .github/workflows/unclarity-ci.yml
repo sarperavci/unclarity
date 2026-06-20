@@ -21,6 +21,17 @@ jobs:
       - run: npm run build
       - run: npx vitest run session bundle device-profile realism run
 
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: unclarity-packages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npx --yes @biomejs/biome@1.9.4 check core/src capture/src
+
   capture-typecheck:
     runs-on: ubuntu-latest
     defaults:
