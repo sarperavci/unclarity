@@ -8,7 +8,12 @@ interface VTimer {
   fireAt: number;
   cb: () => void;
   cleared: boolean;
+  every?: number; // repeating interval (ms); undefined = one-shot
 }
+
+// Backstop against a self-rescheduling runaway within one advance(). Far above any real session's
+// timer-fire count (dozens–hundreds), so tripping it means a genuine runaway.
+const ADVANCE_GUARD = 100_000;
 
 // Deterministic virtual time: overrides setTimeout/performance/Date/Math.random/requestIdleCallback
 // in a realm so every time- and randomness-derived value clarity produces is reproducible from a
@@ -31,9 +36,9 @@ export class VirtualClock {
     return this.t;
   }
 
-  private schedule(cb: () => void, ms?: number): number {
+  private schedule(cb: () => void, ms?: number, every?: number): number {
     const id = this.seq++;
-    this.timers.push({ id, fireAt: this.t + Math.max(0, ms ?? 0), cb, cleared: false });
+    this.timers.push({ id, fireAt: this.t + Math.max(0, ms ?? 0), cb, cleared: false, ...(every !== undefined ? { every: Math.max(1, every) } : {}) });
     return id;
   }
 
@@ -54,15 +59,24 @@ export class VirtualClock {
   async advance(ms: number): Promise<void> {
     const target = this.t + Math.max(0, ms);
     let guard = 0;
-    while (guard++ < 1_000_000) {
+    while (true) {
+      if (guard++ >= ADVANCE_GUARD) {
+        // A timer is re-arming faster than time advances (e.g. a 0ms self-reschedule). Surface it
+        // loudly rather than silently truncating — a real runaway the caller must know about.
+        throw new Error(`unclarity VirtualClock.advance: exceeded ${ADVANCE_GUARD} timer fires in one window (runaway self-rescheduling timer?)`);
+      }
       let due: VTimer | undefined;
       for (const tm of this.timers) {
         if (tm.cleared || tm.fireAt > target) continue;
         if (!due || tm.fireAt < due.fireAt || (tm.fireAt === due.fireAt && tm.id < due.id)) due = tm;
       }
       if (!due) break;
-      this.timers = this.timers.filter((t) => t !== due);
       this.t = due.fireAt;
+      if (due.every !== undefined) {
+        due.fireAt += due.every; // reschedule interval in place
+      } else {
+        this.timers = this.timers.filter((t) => t !== due);
+      }
       try {
         due.cb();
       } catch {
@@ -77,8 +91,8 @@ export class VirtualClock {
   install(window: DOMWindow): void {
     force(window, "setTimeout", (cb: () => void, ms?: number) => this.schedule(cb, ms));
     force(window, "clearTimeout", (id: number) => this.cancel(id));
-    force(window, "setInterval", () => 0); // clarity doesn't use it; no-op avoids runaway during advance
-    force(window, "clearInterval", () => undefined);
+    force(window, "setInterval", (cb: () => void, ms?: number) => this.schedule(cb, ms, ms ?? 0));
+    force(window, "clearInterval", (id: number) => this.cancel(id));
     force(window, "requestIdleCallback", (cb: (d: { didTimeout: boolean; timeRemaining: () => number }) => void) =>
       this.schedule(() => cb({ didTimeout: false, timeRemaining: () => 1e9 }), 0),
     );
