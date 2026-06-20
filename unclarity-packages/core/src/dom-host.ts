@@ -4,6 +4,7 @@ import type { DeviceProfile } from "./device-profile.js";
 import { applyProfile, profileHeaders } from "./device-profile.js";
 import { installShims, assertReady, setScroll } from "./shims.js";
 import { installGeometryOracle, type GeometryMap } from "./geometry.js";
+import { Rng } from "./prng.js";
 import type { LoadedBundle } from "./bundle.js";
 import { installTransport, type UploadRecord } from "./transport.js";
 import type { ClarityBundleProvider } from "./clarity-provider.js";
@@ -27,6 +28,8 @@ export interface SessionOptions {
   geometry?: GeometryMap;
   dispatcher?: Dispatcher;
   clarityConfig?: Record<string, unknown>;
+  // When set, crypto.getRandomValues is seeded so userId/sessionId are reproducible for this seed.
+  seed?: number;
 }
 
 export interface Session {
@@ -64,6 +67,24 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
   installShims(window);
   applyProfile(window, opts.profile);
   installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
+
+  // Seeded identity: deterministic getRandomValues → reproducible userId/sessionId for a given seed.
+  // crypto.subtle (identify SHA-256) stays real.
+  if (opts.seed !== undefined) {
+    const idRng = new Rng((opts.seed ^ 0x53c0ffee) >>> 0);
+    const real = window.crypto;
+    force(window, "crypto", {
+      subtle: real.subtle,
+      randomUUID: () => `${idRng.int(0, 0xffffffff).toString(16)}-seeded`,
+      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
+        if (arr) {
+          const view = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+          for (let i = 0; i < view.length; i++) view[i] = idRng.int(0, 255);
+        }
+        return arr;
+      },
+    });
+  }
   const transport = installTransport(window, {
     headers: profileHeaders(opts.profile, origin, opts.url),
     ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),

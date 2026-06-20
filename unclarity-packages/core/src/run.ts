@@ -60,7 +60,8 @@ function dispatcherFor(index: number, proxy: ProxyConfig | undefined): { dispatc
 
 async function runOne(req: RunRequest, index: number, provider: ClarityBundleProvider): Promise<SessionResult> {
   const start = performance.now();
-  const rng = new Rng((req.seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0);
+  const sessionSeed = (req.seed ^ Math.imul(index + 1, 0x9e3779b1)) >>> 0;
+  const rng = new Rng(sessionSeed);
   const { dispatcher, egress } = dispatcherFor(index, req.network?.proxy);
   const profileObj = preset(req.profile);
   const bundle = req.bundleDir ? await loadBundle(req.bundleDir) : undefined;
@@ -71,6 +72,7 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
     url: req.url,
     profile: profileObj,
     provider,
+    seed: sessionSeed,
     ...(bundle ? { bundle } : {}),
     ...(req.html ? { html: req.html } : {}),
     ...(req.upload ? { upload: req.upload } : {}),
