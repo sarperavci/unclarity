@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext } from "playwright";
-import { writeBundle, type BundleManifest, type GeometryMap } from "@unclarity/core";
+import { writeBundle, PRESETS, type BundleManifest, type GeometryMap } from "@unclarity/core";
 
 export interface CaptureStep {
   action: "click" | "fill" | "wait" | "goto";
@@ -19,6 +19,8 @@ export interface CaptureOptions {
   // Scripted pre-snapshot interactions (login, navigate, expand content) before the snapshot.
   steps?: CaptureStep[];
   waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  // Capture as a known device preset (sets viewport, UA, DPR, mobile/touch coherently).
+  device?: keyof typeof PRESETS;
 }
 
 interface RawCapture {
@@ -72,12 +74,16 @@ function snapshot(): RawCapture {
 /* c8 ignore stop */
 
 export async function capture(opts: CaptureOptions): Promise<BundleManifest> {
-  const viewport = opts.viewport ?? { width: 1280, height: 800 };
+  const dev = opts.device ? PRESETS[opts.device] : undefined;
+  const mobile = dev ? dev.maxTouchPoints > 0 : false;
+  const viewport = opts.viewport ?? (dev ? { width: dev.screen.width, height: dev.screen.height } : { width: 1280, height: 800 });
+  const userAgent = opts.userAgent ?? dev?.userAgent;
   const browser: Browser = await chromium.launch({ headless: true });
   try {
     const context: BrowserContext = await browser.newContext({
       viewport,
-      ...(opts.userAgent ? { userAgent: opts.userAgent } : {}),
+      ...(userAgent ? { userAgent } : {}),
+      ...(dev ? { deviceScaleFactor: dev.devicePixelRatio, isMobile: mobile, hasTouch: mobile } : {}),
       ...(opts.storageState ? { storageState: opts.storageState } : {}),
     });
     const page = await context.newPage();

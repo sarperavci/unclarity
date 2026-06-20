@@ -57,7 +57,13 @@ async function main(): Promise<void> {
     }
     const { readFileSync } = await import("node:fs");
     const steps = flags.steps ? JSON.parse(readFileSync(flags.steps, "utf8")) : undefined;
-    const manifest = await capture.capture({ url, outDir: flags.out, ...(steps ? { steps } : {}), ...(flags["storage-state"] ? { storageState: flags["storage-state"] } : {}) });
+    const manifest = await capture.capture({
+      url,
+      outDir: flags.out,
+      ...(steps ? { steps } : {}),
+      ...(flags["storage-state"] ? { storageState: flags["storage-state"] } : {}),
+      ...(flags.device ? { device: flags.device } : {}),
+    });
     emit({ type: "captured", manifest });
   } else {
     process.stderr.write("usage: unclarity <run|capture>\n");
