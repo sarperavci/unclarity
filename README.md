@@ -1,3 +1,16 @@
+> ## 🌫️ This is the `unclarity` fork
+> This repository extends [microsoft/clarity](https://github.com/microsoft/clarity) with **unclarity** —
+> a tool that generates **synthetic Clarity sessions browserlessly** by driving Microsoft's real
+> `clarity.js` inside a Node DOM shim (no payload forging). It adds page replication (manual + Playwright
+> capture), device fingerprints, a seeded realism engine, and **Node + Python** APIs.
+>
+> **The upstream packages under `packages/` are kept pristine.** All new code lives in
+> `unclarity-packages/` and `python/`. See **[UNCLARITY.md](./UNCLARITY.md)** for usage and design.
+>
+> *The original Microsoft Clarity README follows.*
+
+---
+
 # Clarity
 Clarity is an open-source behavioral analytics library written in typescript, with two key goals: privacy & performance. 
 
