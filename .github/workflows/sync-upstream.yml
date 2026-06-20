@@ -1,0 +1,47 @@
+name: sync upstream
+
+# Keeps the fork's pristine packages/ in step with microsoft/clarity (reference + LocalFork provider).
+# Our code is additive under unclarity-packages/ + python/, so merges are normally conflict-free.
+# On conflict, opens an issue for manual resolution instead of force-merging.
+on:
+  schedule:
+    - cron: "0 5 * * 1" # weekly, Monday 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Merge upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "unclarity-sync"
+          git config user.email "sync@users.noreply.github.com"
+          git remote add upstream https://github.com/microsoft/clarity.git || true
+          git fetch upstream
+          BRANCH="sync/upstream-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          if git merge --no-edit upstream/master; then
+            if git diff --quiet HEAD@{1} HEAD; then
+              echo "Already up to date; nothing to sync."
+              exit 0
+            fi
+            git push -u origin "$BRANCH"
+            gh pr create --title "Sync upstream microsoft/clarity" \
+              --body "Automated weekly merge of upstream/master. unclarity packages are additive; review the pristine packages/ delta." \
+              --label upstream-sync
+          else
+            git merge --abort
+            gh issue create --title "⚠️ upstream sync conflict" --label upstream-sync \
+              --body "Weekly upstream merge hit a conflict and was aborted. Resolve manually: \`git fetch upstream && git merge upstream/master\`."
+            exit 1
+          fi

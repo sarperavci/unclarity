@@ -35,6 +35,12 @@ describe("full determinism (virtual clock + seeded randomness)", () => {
     expect(a).not.toEqual(b);
   }, 30000);
 
+  it("restores the global Math.random after the session closes (H1)", async () => {
+    const original = Math.random;
+    await deterministicPayloads(55);
+    expect(Math.random).toBe(original);
+  }, 30000);
+
   it("captures interaction events deterministically (no real network)", async () => {
     const payloads = await deterministicPayloads(7);
     const joined = payloads.join("");

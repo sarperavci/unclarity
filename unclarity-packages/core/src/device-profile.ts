@@ -1,5 +1,6 @@
 import type { DOMWindow } from "jsdom";
 import { force } from "./util.js";
+import { CLOCK_ORIGIN } from "./version.js";
 
 export interface UaBrand {
   brand: string;
@@ -38,11 +39,13 @@ function secChUa(brands: readonly UaBrand[]): string {
   return brands.map((b) => `"${b.brand}";v="${b.version}"`).join(", ");
 }
 
-// Minutes a zone is ahead of UTC (positive = ahead). Uses the real Intl, before any realm patch.
+// Minutes a zone is ahead of UTC (positive = ahead), computed for the FIXED virtual-clock origin
+// instant — not the real wall clock — so the reported offset is deterministic (no DST drift across
+// calendar dates) and coherent with the realm's pinned Date.now().
 function tzOffsetMinutes(timezone: string): number {
-  const now = new Date();
-  const utc = new Date(now.toLocaleString("en-US", { timeZone: "UTC" }));
-  const local = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  const ref = new Date(CLOCK_ORIGIN);
+  const utc = new Date(ref.toLocaleString("en-US", { timeZone: "UTC" }));
+  const local = new Date(ref.toLocaleString("en-US", { timeZone: timezone }));
   return Math.round((local.getTime() - utc.getTime()) / 60000);
 }
 

@@ -7,8 +7,9 @@ import { PinnedCdn, LiveCdn, type ClarityBundleProvider } from "./clarity-provid
 import { runScenario } from "./runner.js";
 import { Rng } from "./prng.js";
 import type { Scenario } from "./scenario.js";
+import { DEFAULT_CLARITY_VERSION } from "./version.js";
 
-const DEFAULT_VERSION = "0.8.65";
+const SESSION_TIMEOUT_MS = 120_000;
 
 export interface ProxyConfig {
   url: string;
@@ -49,7 +50,7 @@ export interface SessionResult {
 function makeProvider(req: RunRequest): ClarityBundleProvider {
   const source = req.clarity?.source ?? "pinned";
   if (source === "live") return new LiveCdn();
-  return new PinnedCdn(req.clarity?.version ?? DEFAULT_VERSION);
+  return new PinnedCdn(req.clarity?.version ?? DEFAULT_CLARITY_VERSION);
 }
 
 function dispatcherFor(index: number, proxy: ProxyConfig | undefined): { dispatcher?: Dispatcher; egress?: string } {
@@ -70,66 +71,65 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
   const bundle = req.bundleDir ? await loadBundle(req.bundleDir) : undefined;
   const geometryMode: string | undefined = bundle?.manifest.geometryMode;
 
-  const session = await createSession({
-    projectId: req.projectId,
-    url: req.url,
-    profile: profileObj,
-    provider,
-    seed: sessionSeed,
-    ...(req.deterministic ? { deterministic: true } : {}),
-    ...(bundle ? { bundle } : {}),
-    ...(req.html ? { html: req.html } : {}),
-    ...(req.upload ? { upload: req.upload } : {}),
-    ...(dispatcher ? { dispatcher } : {}),
-  });
   try {
-    await runScenario(session, req.scenario, rng);
-    await session.end();
+    const session = await createSession({
+      projectId: req.projectId,
+      url: req.url,
+      profile: profileObj,
+      provider,
+      seed: sessionSeed,
+      ...(req.deterministic ? { deterministic: true } : {}),
+      ...(bundle ? { bundle } : {}),
+      ...(req.html ? { html: req.html } : {}),
+      ...(req.upload ? { upload: req.upload } : {}),
+      ...(dispatcher ? { dispatcher } : {}),
+    });
     // Deterministic/callback mode reports via captured payloads; URL mode via the HTTP log.
-    const uploads = req.deterministic ? session.payloads.length : session.uploadLog.length;
-    const ok = req.deterministic ? uploads : session.uploadLog.filter((r) => r.status >= 200 && r.status <= 208).length;
-    let verdict: Verdict = ok === uploads && uploads > 0 ? "ok" : "failed";
-    if (verdict === "ok" && geometryMode === "inferred") verdict = "degraded";
-    return {
-      index,
-      clarityVersion: session.clarityVersion,
-      bundleSource: session.bundleSource,
-      verdict,
-      uploads,
-      ok,
-      durationMs: Math.round(performance.now() - start),
-      ...(egress ? { egress } : {}),
+    const countUploads = (): { uploads: number; ok: number } => {
+      const uploads = req.deterministic ? session.payloads.length : session.uploadLog.length;
+      const ok = req.deterministic ? uploads : session.uploadLog.filter((r) => r.status >= 200 && r.status <= 208).length;
+      return { uploads, ok };
     };
-  } catch (err) {
-    return {
-      index,
-      clarityVersion: session.clarityVersion,
-      bundleSource: session.bundleSource,
-      verdict: "failed",
-      uploads: session.uploadLog.length,
-      ok: 0,
-      durationMs: Math.round(performance.now() - start),
-      error: err instanceof Error ? err.message : String(err),
-    };
+    try {
+      await runScenario(session, req.scenario, rng);
+      await session.end();
+      const { uploads, ok } = countUploads();
+      let verdict: Verdict = ok === uploads && uploads > 0 ? "ok" : "failed";
+      if (verdict === "ok" && geometryMode === "inferred") verdict = "degraded";
+      return { index, clarityVersion: session.clarityVersion, bundleSource: session.bundleSource, verdict, uploads, ok, durationMs: Math.round(performance.now() - start), ...(egress ? { egress } : {}) };
+    } catch (err) {
+      const { uploads, ok } = countUploads(); // C7: count payloads even on the error path
+      return { index, clarityVersion: session.clarityVersion, bundleSource: session.bundleSource, verdict: "failed", uploads, ok, durationMs: Math.round(performance.now() - start), error: err instanceof Error ? err.message : String(err), ...(egress ? { egress } : {}) };
+    } finally {
+      session.close();
+    }
   } finally {
-    session.close();
+    // H7: always release the per-session proxy dispatcher (createSession may have thrown).
+    if (dispatcher) await dispatcher.close().catch(() => undefined);
   }
 }
 
 // Run `count` sessions with a bounded concurrency pool, yielding each result as it completes.
 export async function* run(req: RunRequest): AsyncGenerator<SessionResult> {
   const provider = makeProvider(req);
-  const concurrency = Math.max(1, Math.min(req.concurrency || 1, 16));
+  // H1: deterministic mode shares one process-global Math.random, so it MUST run one session at a
+  // time or sessions would clobber each other's RNG.
+  const concurrency = req.deterministic ? 1 : Math.max(1, Math.min(req.concurrency || 1, 16));
   let next = 0;
   const active = new Map<number, Promise<SessionResult>>();
 
   const launch = (): void => {
     const i = next++;
+    const fallback = (error: string, durationMs = 0): SessionResult => ({ index: i, clarityVersion: "", bundleSource: provider.describe().source, verdict: "failed", uploads: 0, ok: 0, durationMs, error });
+    // H9: per-session timeout backstop so one hung session can't stall the whole generator.
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<SessionResult>((resolve) => {
+      timer = setTimeout(() => resolve(fallback("session timeout", SESSION_TIMEOUT_MS)), SESSION_TIMEOUT_MS);
+    });
+    const run = runOne(req, i, provider).catch((err): SessionResult => fallback(err instanceof Error ? err.message : String(err)));
     active.set(
       i,
-      runOne(req, i, provider).catch(
-        (err): SessionResult => ({ index: i, clarityVersion: "", bundleSource: provider.describe().source, verdict: "failed", uploads: 0, ok: 0, durationMs: 0, error: err instanceof Error ? err.message : String(err) }),
-      ),
+      Promise.race([run, timeout]).finally(() => clearTimeout(timer)),
     );
   };
 

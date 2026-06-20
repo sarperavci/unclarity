@@ -16,8 +16,9 @@ export class Rng {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  /** Integer in [min, max] inclusive. */
+  /** Integer in [min, max] inclusive. Returns min if the range is inverted/empty. */
   int(min: number, max: number): number {
+    if (max <= min) return min;
     return min + Math.floor(this.next() * (max - min + 1));
   }
 

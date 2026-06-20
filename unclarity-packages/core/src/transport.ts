@@ -104,7 +104,11 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
       const headers = baseHeaders({ "content-type": "text/plain;charset=UTF-8" });
       const t0 = performance.now();
       try {
-        const res = await request(url, { method: "POST", headers, body: payload, ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}) });
+        // H9: the final flush is the most timeout-sensitive upload; bound it like the XHR path so a
+        // stalled beacon can't make end()→settled() hang forever. (M1: clarity already saw `true`
+        // from sendBeacon and won't XHR-fallback, so a failure here is logged as status:0 — a known
+        // best-effort loss of the final payload, matching real sendBeacon's fire-and-forget nature.)
+        const res = await request(url, { method: "POST", headers, body: payload, headersTimeout: 15000, bodyTimeout: 15000, ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}) });
         await res.body.text();
         log.push({ via: "beacon", status: res.statusCode, bytes: payload.length, ms: Math.round(performance.now() - t0), gzip: false });
       } catch (err) {

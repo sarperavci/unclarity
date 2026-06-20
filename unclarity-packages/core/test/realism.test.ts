@@ -42,6 +42,28 @@ describe("realism generators", () => {
     const last = path[path.length - 1]!;
     expect(last.x).toBe(300);
     expect(last.y).toBe(200);
+    // H2: no zero-dt duplicate of the final coordinate (the robotic tell)
+    const prev = path[path.length - 2]!;
+    expect(prev.x === last.x && prev.y === last.y && last.dt === 0).toBe(false);
+  });
+
+  it("decimate folds residual time into the tail instead of duplicating it", () => {
+    const out = decimate([
+      { x: 0, y: 0, dt: 0 },
+      { x: 5, y: 0, dt: 10 },
+    ]);
+    // last point is (5,0); must not appear twice
+    const last = out[out.length - 1]!;
+    expect(last.x).toBe(5);
+    expect(out.filter((p) => p.x === 5 && p.y === 0).length).toBe(1);
+  });
+
+  it("clickPlacement handles a 1px box without escaping it", () => {
+    const p = clickPlacement({ x: 100, y: 50, width: 1, height: 1 }, new Rng(4));
+    expect(p.x).toBeGreaterThanOrEqual(100);
+    expect(p.x).toBeLessThanOrEqual(101);
+    expect(p.y).toBeGreaterThanOrEqual(50);
+    expect(p.y).toBeLessThanOrEqual(51);
   });
 
   it("clickPlacement stays inside the box", () => {

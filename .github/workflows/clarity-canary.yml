@@ -1,0 +1,65 @@
+name: clarity compatibility canary
+
+# Detects when the live clarity.js Microsoft serves changes and whether we're still compatible.
+#   exit 0  -> live == pinned, compatible: nothing to do
+#   exit 10 -> newer version, still compatible: open a PR bumping the pinned version
+#   exit 1  -> incompatible (drift): open/refresh an issue + alert; NEVER auto-degrade
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Build core
+        working-directory: unclarity-packages/core
+        run: npm install && npm run build
+      - name: Run canary
+        id: canary
+        working-directory: unclarity-packages/core
+        continue-on-error: true
+        run: |
+          node dist/cli.js canary --project "${{ secrets.CLARITY_PROJECT_ID }}" > canary.json
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          cat canary.json
+
+      - name: Bump pinned version (newer & compatible)
+        if: steps.canary.outputs.code == '10'
+        working-directory: unclarity-packages/core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEW=$(jq -r .liveVersion canary.json)
+          BRANCH="canary/bump-clarity-$NEW"
+          git config user.name "unclarity-canary"
+          git config user.email "canary@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          sed -i "s/DEFAULT_CLARITY_VERSION = \".*\"/DEFAULT_CLARITY_VERSION = \"$NEW\"/" src/version.ts
+          git add src/version.ts
+          git commit -m "Bump pinned clarity.js to $NEW (canary: compatible)"
+          git push -u origin "$BRANCH"
+          gh pr create --title "Bump pinned clarity.js to $NEW" \
+            --body "The compatibility canary detected live clarity.js **$NEW** and it PASSES the contract test (payloads decode). Auto-bump of \`DEFAULT_CLARITY_VERSION\`.$(printf '\n\n```json\n')$(cat canary.json)$(printf '\n```\n')" \
+            --label clarity-compatible
+
+      - name: Open drift issue (incompatible)
+        if: steps.canary.outputs.code == '1'
+        working-directory: unclarity-packages/core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --title "⚠️ clarity-drift: live clarity.js is incompatible" \
+            --label clarity-drift \
+            --body "The compatibility canary FAILED the contract test against the live clarity.js. We did **not** auto-degrade. Investigate and fix.$(printf '\n\n```json\n')$(cat canary.json)$(printf '\n```\n')"
+          # Optional: add a Slack/PushNotification step here.
+          exit 1

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { run, type RunRequest } from "./run.js";
+import { runCanary, canaryExitCode } from "./canary.js";
 
 function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -65,8 +66,17 @@ async function main(): Promise<void> {
       ...(flags.device ? { device: flags.device } : {}),
     });
     emit({ type: "captured", manifest });
+  } else if (cmd === "canary") {
+    const flags = parseFlags(process.argv.slice(3));
+    if (!flags.project) {
+      process.stderr.write("usage: unclarity canary --project <id> [--pinned <version>]\n");
+      process.exit(2);
+    }
+    const result = await runCanary(flags.project, flags.pinned || undefined);
+    emit(result);
+    process.exit(canaryExitCode(result)); // 0 current, 10 newer-compatible, 1 drift
   } else {
-    process.stderr.write("usage: unclarity <run|capture>\n");
+    process.stderr.write("usage: unclarity <run|capture|canary>\n");
     process.exit(2);
   }
 }

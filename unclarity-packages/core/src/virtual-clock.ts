@@ -1,6 +1,7 @@
 import type { DOMWindow } from "jsdom";
 import { Rng } from "./prng.js";
 import { force } from "./util.js";
+import { CLOCK_ORIGIN } from "./version.js";
 
 interface VTimer {
   id: number;
@@ -19,8 +20,9 @@ export class VirtualClock {
   private seq = 1;
   private readonly rng: Rng;
   readonly origin: number;
+  private prevRandom: (() => number) | undefined;
 
-  constructor(seed: number, origin = 1_700_000_000_000) {
+  constructor(seed: number, origin = CLOCK_ORIGIN) {
     this.rng = new Rng((seed ^ 0x1234abcd) >>> 0);
     this.origin = origin;
   }
@@ -41,6 +43,9 @@ export class VirtualClock {
   }
 
   private async drainMicrotasks(): Promise<void> {
+    // setImmediate lets libuv thread-pool continuations (e.g. crypto.subtle.digest in identify)
+    // settle, then drain chained microtasks. Deterministic in ordering since we always await it.
+    await new Promise<void>((resolve) => setImmediate(resolve));
     for (let i = 0; i < 12; i++) await Promise.resolve();
   }
 
@@ -98,6 +103,19 @@ export class VirtualClock {
     }
     force(window, "Date", VDate);
 
+    // window.Math is the SHARED Node intrinsic (jsdom does not give realms their own Math), so this
+    // override is process-global. Save the original to restore on uninstall(); deterministic runs must
+    // be single-session (run() enforces concurrency=1) since this slot is last-writer-wins.
+    this.prevRandom = window.Math.random;
     force(window.Math, "random", () => this.rng.next());
+  }
+
+  // Restore the shared Math.random override. Called from Session.close() so a deterministic run does
+  // not permanently pollute the host process's Math.random.
+  uninstall(window: DOMWindow): void {
+    if (this.prevRandom) {
+      force(window.Math, "random", this.prevRandom);
+      this.prevRandom = undefined;
+    }
   }
 }

@@ -17,6 +17,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "clarity-decode": "0.8.65",
     "jsdom": "^29.1.1",
     "socks": "^2.8.9",
     "undici": "^6.0.0"
@@ -24,7 +25,6 @@
   "devDependencies": {
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.0.0",
-    "clarity-decode": "0.8.65",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

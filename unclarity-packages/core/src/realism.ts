@@ -24,8 +24,16 @@ export function decimate(points: PathPoint[], minDist = 20, minTime = 25): PathP
       carriedTime = 0;
     }
   }
+  // Ensure the path ends exactly at the tail without appending a zero-dt duplicate. If the last kept
+  // point is already at the tail's coordinates, fold any residual time into it instead of pushing a
+  // duplicate sample (the duplicate was the robotic tell this function exists to avoid).
+  const lastOut = out[out.length - 1]!;
   const tail = points[points.length - 1]!;
-  if (out[out.length - 1] !== tail) out.push({ x: tail.x, y: tail.y, dt: carriedTime });
+  if (lastOut.x !== tail.x || lastOut.y !== tail.y) {
+    out.push({ x: tail.x, y: tail.y, dt: carriedTime });
+  } else if (carriedTime > 0) {
+    out[out.length - 1] = { ...lastOut, dt: lastOut.dt + carriedTime };
+  }
   return out;
 }
 
@@ -47,11 +55,13 @@ export function mousePath(from: { x: number; y: number }, to: { x: number; y: nu
 
 // Center-biased gaussian click point inside a box (so clarity's eX/eY land believably).
 export function clickPlacement(box: Box, rng: Rng): { x: number; y: number } {
+  // Clamp into [lo, hi]; for degenerate (<=2px) boxes the bounds can invert, so fall back to center.
+  const clamp = (v: number, lo: number, hi: number): number => (hi < lo ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
   const x = rng.gaussian(box.x + box.width / 2, box.width / 6);
   const y = rng.gaussian(box.y + box.height / 2, box.height / 6);
   return {
-    x: Math.round(Math.max(box.x + 1, Math.min(box.x + box.width - 1, x))),
-    y: Math.round(Math.max(box.y + 1, Math.min(box.y + box.height - 1, y))),
+    x: Math.round(clamp(x, box.x + 1, box.x + box.width - 1)),
+    y: Math.round(clamp(y, box.y + 1, box.y + box.height - 1)),
   };
 }
 

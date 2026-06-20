@@ -72,9 +72,12 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
   const dom = new JSDOM(html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc });
   const { window } = dom;
 
-  if (opts.deterministic && opts.seed === undefined) throw new Error("unclarity: deterministic mode requires a seed");
+  // H8: if anything during setup/eval throws, the realm would leak (runOne's finally only covers a
+  // resolved session). Close the window on any setup failure before rethrowing.
+  try {
+    if (opts.deterministic && opts.seed === undefined) throw new Error("unclarity: deterministic mode requires a seed");
 
-  installShims(window);
+    installShims(window);
   applyProfile(window, opts.profile);
   installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
 
@@ -205,7 +208,12 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
       await transport.settled();
     },
     close() {
+      clock?.uninstall(window); // H1: restore the shared Math.random override
       window.close();
     },
   };
+  } catch (err) {
+    window.close();
+    throw err;
+  }
 }
