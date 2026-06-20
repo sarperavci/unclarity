@@ -88,8 +88,13 @@ def _build_request(
 
 
 def _check_exit(code: int, got_results: bool, stderr: str) -> None:
-    # 0 = all ok, 1 = some sessions failed (already streamed) OR a crash before any results.
-    if code in (0, 1) and got_results:
+    """Raise unless the CLI ran cleanly.
+
+    Exit 0 = all sessions ok. Exit 1 = some sessions failed (their results were already streamed; see
+    Run.summary) — tolerated only when results were streamed. Any nonzero exit with NO results is a
+    real crash (bad request, usage error, internal throw) and raises with the captured stderr.
+    """
+    if got_results and code in (0, 1):
         return
     if code == 0:
         return
@@ -107,6 +112,26 @@ class Run:
     def summary(self) -> RunSummary | None:
         """Final summary emitted by the CLI; populated once a stream is fully consumed."""
         return self._summary
+
+    def _dispatch(self, line: str) -> SessionResult | None:
+        """Parse one stdout line: return a SessionResult for `result`, capture `done`, else None.
+
+        Tolerates blank / non-JSON lines (stdout should carry only JSON). Shared by stream/astream so
+        the parse+dispatch contract lives in exactly one place.
+        """
+        line = line.strip()
+        if not line:
+            return None
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        kind = msg.get("type")
+        if kind == "result":
+            return SessionResult.from_json(msg)
+        if kind == "done":
+            self._summary = RunSummary(failed=int(msg.get("failed", 0)))
+        return None
 
     def stream(self) -> Iterator[SessionResult]:
         """Synchronously stream results as each session completes."""
@@ -133,19 +158,10 @@ class Run:
             proc.stdin.write(json.dumps(self._request))
             proc.stdin.close()
             for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)  # stdout carries only JSON; tolerate stray non-JSON
-                except json.JSONDecodeError:
-                    continue
-                kind = msg.get("type")
-                if kind == "result":
+                result = self._dispatch(line)
+                if result is not None:
                     got_results = True
-                    yield SessionResult.from_json(msg)
-                elif kind == "done":
-                    self._summary = RunSummary(failed=int(msg.get("failed", 0)))
+                    yield result
             drained_fully = True
         finally:
             # H6: always reap the child and close pipes, even on early break / GeneratorExit.
@@ -201,19 +217,10 @@ class Run:
             proc.stdin.write(json.dumps(self._request).encode())
             proc.stdin.close()
             async for raw in stdout:
-                line = raw.decode("utf-8", "replace").strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                kind = msg.get("type")
-                if kind == "result":
+                result = self._dispatch(raw.decode("utf-8", "replace"))
+                if result is not None:
                     got_results = True
-                    yield SessionResult.from_json(msg)
-                elif kind == "done":
-                    self._summary = RunSummary(failed=int(msg.get("failed", 0)))
+                    yield result
             drained_fully = True
         finally:
             # H6: always reap the child, even on early break / GeneratorExit.
