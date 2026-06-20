@@ -42,14 +42,15 @@ export async function runCanary(projectId: string, pinnedVersion = DEFAULT_CLARI
     await session.end();
     session.close();
     const payloads = session.payloads;
-    let allDecoded = payloads.length > 0;
-    for (const p of payloads) {
+    const decodes = (p: string): boolean => {
       try {
         decode(p);
+        return true;
       } catch {
-        allDecoded = false;
+        return false;
       }
-    }
+    };
+    const allDecoded = payloads.length > 0 && payloads.every(decodes);
     return { ...base, evaluated: true, payloadCount: payloads.length, allDecoded, compatible: allDecoded };
   } catch (err) {
     return { ...base, evaluated: false, payloadCount: 0, allDecoded: false, compatible: false, error: err instanceof Error ? err.message : String(err) };

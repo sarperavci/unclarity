@@ -1,4 +1,5 @@
 import { JSDOM, VirtualConsole } from "jsdom";
+import type { DOMWindow } from "jsdom";
 import type { Dispatcher } from "undici";
 import type { DeviceProfile } from "./device-profile.js";
 import { applyProfile, profileHeaders } from "./device-profile.js";
@@ -8,10 +9,30 @@ import { Rng } from "./prng.js";
 import { VirtualClock } from "./virtual-clock.js";
 import type { LoadedBundle } from "./bundle.js";
 import { installTransport, type UploadRecord } from "./transport.js";
-import type { ClarityBundleProvider } from "./clarity-provider.js";
+import type { ClarityBundleProvider, ProviderSource } from "./clarity-provider.js";
 import { force, sleep } from "./util.js";
 
 const COLLECT = "https://t.clarity.ms/collect";
+const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+const DEFAULT_DOC_HEIGHT = 3000;
+// Upload-batching delay (clarity config.delay). Deterministic mode uses a shorter virtual delay so
+// fewer virtual-clock ticks are needed to flush; real mode keeps clarity's default-ish cadence.
+const UPLOAD_DELAY_REAL_MS = 200;
+const UPLOAD_DELAY_VIRTUAL_MS = 50;
+const DISCOVER_SETTLE_MS = 300; // let discover + first scheduled upload run after eval
+const FLUSH_BEFORE_PAGEHIDE_MS = 400; // let late encodes + the batch timer fire before final flush
+const FLUSH_AFTER_PAGEHIDE_MS = 300; // let the final beacon upload complete
+
+type ClarityFn = { (...args: unknown[]): void; q?: unknown[][]; v?: string };
+
+// Set up the clarity command-queue stub on the realm; the library drains it once evaluated.
+function installClarityQueue(window: DOMWindow): ClarityFn {
+  const clarity: ClarityFn = function (this: unknown, ...args: unknown[]): void {
+    (clarity.q ??= []).push(args);
+  };
+  force(window, "clarity", clarity);
+  return clarity;
+}
 
 export interface SessionOptions {
   projectId: string;
@@ -58,91 +79,48 @@ export interface Session {
   close(): void;
 }
 
-export async function createSession(opts: SessionOptions): Promise<Session> {
-  const html = opts.html ?? opts.bundle?.html;
-  if (html === undefined) throw new Error("unclarity: createSession requires `html` or `bundle`");
-  const version = await opts.provider.resolveVersion(opts.projectId);
-  const source = await opts.provider.fetchLibrary(version);
-  const viewport = opts.viewport ?? opts.bundle?.manifest.viewport ?? { width: 1280, height: 800 };
-  const docHeight = opts.docHeight ?? opts.bundle?.manifest.docHeight ?? 3000;
-  const geometry = opts.geometry ?? opts.bundle?.geometry;
-  const origin = new URL(opts.url).origin;
-
-  const vc = new VirtualConsole();
-  const dom = new JSDOM(html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc });
-  const { window } = dom;
-
-  // H8: if anything during setup/eval throws, the realm would leak (runOne's finally only covers a
-  // resolved session). Close the window on any setup failure before rethrowing.
-  try {
-    if (opts.deterministic && opts.seed === undefined) throw new Error("unclarity: deterministic mode requires a seed");
-
-    installShims(window);
-  applyProfile(window, opts.profile);
-  installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
-
-  // Deterministic mode: virtual clock + no async compression (CompressionStream removed so
-  // compress() short-circuits synchronously) so payloads are reproducible and free of real async.
-  const clock = opts.deterministic ? new VirtualClock(opts.seed ?? 0) : undefined;
-  if (clock) {
-    Reflect.deleteProperty(window as unknown as Record<string, unknown>, "CompressionStream");
-    clock.install(window);
-  }
-
-  // Seeded identity: deterministic getRandomValues → reproducible userId/sessionId for a given seed.
-  // crypto.subtle (identify SHA-256) stays real.
-  if (opts.seed !== undefined) {
-    const idRng = new Rng((opts.seed ^ 0x53c0ffee) >>> 0);
-    const real = window.crypto;
-    force(window, "crypto", {
-      subtle: real.subtle,
-      randomUUID: () => `${idRng.int(0, 0xffffffff).toString(16)}-seeded`,
-      getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
-        if (arr) {
-          const view = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
-          for (let i = 0; i < view.length; i++) view[i] = idRng.int(0, 255);
-        }
-        return arr;
-      },
-    });
-  }
-  const transport = installTransport(window, {
-    headers: profileHeaders(opts.profile, origin, opts.url),
-    ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+// Seeded identity: deterministic getRandomValues → reproducible userId/sessionId for a seed.
+// crypto.subtle (identify SHA-256) stays real.
+function installSeededCrypto(window: DOMWindow, seed: number): void {
+  const idRng = new Rng((seed ^ 0x53c0ffee) >>> 0);
+  const subtle = window.crypto.subtle;
+  force(window, "crypto", {
+    subtle,
+    randomUUID: () => `${idRng.int(0, 0xffffffff).toString(16)}-seeded`,
+    getRandomValues: <T extends ArrayBufferView | null>(arr: T): T => {
+      if (arr) {
+        const view = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+        for (let i = 0; i < view.length; i++) view[i] = idRng.int(0, 255);
+      }
+      return arr;
+    },
   });
+}
 
-  assertReady(window);
+interface SessionContext {
+  window: DOMWindow;
+  version: string;
+  bundleSource: ProviderSource;
+  transport: ReturnType<typeof installTransport>;
+  payloads: string[];
+  tick: (ms: number) => Promise<void>;
+  clock: VirtualClock | undefined;
+}
 
-  // Deterministic mode captures payloads via a callback (no real network); else default to ingestion.
-  const payloads: string[] = [];
-  const upload = clock ? (p: string) => void payloads.push(p) : (opts.upload ?? COLLECT);
-  const tick = clock ? (ms: number) => clock.advance(ms) : (ms: number) => sleep(ms);
+// Build the behavioral Session API (the input-dispatch methods) over a fully-set-up realm.
+function buildSessionApi(ctx: SessionContext): Session {
+  const { window, transport, payloads, tick, clock } = ctx;
+  const view = window as unknown as Window;
 
-  const startConfig: Record<string, unknown> = {
-    projectId: opts.projectId,
-    upload,
-    delay: clock ? 50 : 200,
-    lean: false,
-    content: true,
-    track: true,
-    ...opts.clarityConfig,
-  };
-
-  type ClarityFn = { (...args: unknown[]): void; q?: unknown[][]; v?: string };
-  const clarity: ClarityFn = function (this: unknown, ...args: unknown[]): void {
-    (clarity.q ??= []).push(args);
-  };
-  force(window, "clarity", clarity);
-  clarity("start", startConfig);
-
-  opts.provider.evaluate(window, source);
-  await tick(300); // allow discover + initial scheduled tasks (+ first upload) to run
-
+  // jsdom stamps synthetic events with an absolute epoch timeStamp; clarity's time() expects it
+  // relative to performance.timeOrigin. Normalize to a relative high-res value.
   const stamp = <T extends Event>(ev: T): T => {
-    // jsdom stamps synthetic events with an absolute epoch timeStamp; clarity's time() expects it
-    // relative to performance.timeOrigin. Normalize to a relative high-res value.
     Object.defineProperty(ev, "timeStamp", { value: window.performance.now(), configurable: true });
     return ev;
+  };
+  const fire = (el: EventTarget, ev: Event): boolean => el.dispatchEvent(stamp(ev));
+  const mouse = (type: string, el: Element, x: number, y: number): void => {
+    fire(el, new window.MouseEvent(type, { bubbles: true, cancelable: true, view, button: 0, detail: 1, clientX: x, clientY: y }));
   };
   const require = (selector: string): Element => {
     const el = window.document.querySelector(selector);
@@ -153,17 +131,10 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
     const r = el.getBoundingClientRect();
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   };
-  const fire = (el: EventTarget, ev: Event): boolean => el.dispatchEvent(stamp(ev));
-  const view = window as unknown as Window;
-  const mouse = (type: string, el: Element, x: number, y: number): void => {
-    fire(el, new window.MouseEvent(type, { bubbles: true, cancelable: true, view, button: 0, detail: 1, clientX: x, clientY: y }));
-  };
-
-  const describe = opts.provider.describe();
 
   return {
-    clarityVersion: version,
-    bundleSource: describe.source,
+    clarityVersion: ctx.version,
+    bundleSource: ctx.bundleSource,
     uploadLog: transport.log,
     payloads,
     advance: tick,
@@ -200,11 +171,11 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
       fire(el, new window.Event("input", { bubbles: true }));
     },
     async end() {
-      // Let scheduled encodes + the batched upload timer (config.delay) run BEFORE the final flush,
-      // otherwise stop() flushes before late events (e.g. clicks) are encoded.
-      await tick(400);
+      // Let scheduled encodes + the batched upload timer run BEFORE the final flush, else stop()
+      // flushes before late events (e.g. clicks) are encoded.
+      await tick(FLUSH_BEFORE_PAGEHIDE_MS);
       fire(window, new window.Event("pagehide"));
-      await tick(300);
+      await tick(FLUSH_AFTER_PAGEHIDE_MS);
       await transport.settled();
     },
     close() {
@@ -212,6 +183,64 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
       window.close();
     },
   };
+}
+
+export async function createSession(opts: SessionOptions): Promise<Session> {
+  const html = opts.html ?? opts.bundle?.html;
+  if (html === undefined) throw new Error("unclarity: createSession requires `html` or `bundle`");
+  if (opts.deterministic && opts.seed === undefined) throw new Error("unclarity: deterministic mode requires a seed");
+
+  const version = await opts.provider.resolveVersion(opts.projectId);
+  const source = await opts.provider.fetchLibrary(version);
+  const viewport = opts.viewport ?? opts.bundle?.manifest.viewport ?? DEFAULT_VIEWPORT;
+  const docHeight = opts.docHeight ?? opts.bundle?.manifest.docHeight ?? DEFAULT_DOC_HEIGHT;
+  const geometry = opts.geometry ?? opts.bundle?.geometry;
+  const origin = new URL(opts.url).origin;
+
+  const dom = new JSDOM(html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: new VirtualConsole() });
+  const { window } = dom;
+
+  // H8: if anything during setup/eval throws, close the realm before rethrowing (runOne's finally
+  // only covers an already-resolved session).
+  try {
+    installShims(window);
+    applyProfile(window, opts.profile);
+    installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
+
+    // Deterministic mode: virtual clock + no async compression (CompressionStream removed so
+    // compress() short-circuits synchronously) so payloads are reproducible and free of real async.
+    const clock = opts.deterministic ? new VirtualClock(opts.seed ?? 0) : undefined;
+    if (clock) {
+      Reflect.deleteProperty(window as unknown as Record<string, unknown>, "CompressionStream");
+      clock.install(window);
+    }
+    if (opts.seed !== undefined) installSeededCrypto(window, opts.seed);
+
+    const transport = installTransport(window, {
+      headers: profileHeaders(opts.profile, origin, opts.url),
+      ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+    });
+    assertReady(window);
+
+    // Deterministic mode captures payloads via a callback (no real network); else default to ingestion.
+    const payloads: string[] = [];
+    const upload = clock ? (p: string) => void payloads.push(p) : (opts.upload ?? COLLECT);
+    const tick = clock ? (ms: number) => clock.advance(ms) : (ms: number) => sleep(ms);
+
+    const clarity = installClarityQueue(window);
+    clarity("start", {
+      projectId: opts.projectId,
+      upload,
+      delay: clock ? UPLOAD_DELAY_VIRTUAL_MS : UPLOAD_DELAY_REAL_MS,
+      lean: false,
+      content: true,
+      track: true,
+      ...opts.clarityConfig,
+    });
+    opts.provider.evaluate(window, source);
+    await tick(DISCOVER_SETTLE_MS); // allow discover + initial scheduled tasks (+ first upload) to run
+
+    return buildSessionApi({ window, version, bundleSource: opts.provider.describe().source, transport, payloads, tick, clock });
   } catch (err) {
     window.close();
     throw err;

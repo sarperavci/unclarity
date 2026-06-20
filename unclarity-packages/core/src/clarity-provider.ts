@@ -48,11 +48,13 @@ export async function parseTagConfig(projectId: string): Promise<TagConfig> {
   return { ...parsed, version: parsed.version };
 }
 
+export type ProviderSource = "pinned" | "live" | "fork";
+
 export interface ClarityBundleProvider {
   resolveVersion(projectId: string): Promise<string>;
   fetchLibrary(version: string): Promise<string>;
   evaluate(window: DOMWindow, source: string): void;
-  describe(): { source: "pinned" | "live" | "fork"; version: string };
+  describe(): { source: ProviderSource; version: string };
 }
 
 const CACHE_DIR = join(tmpdir(), "unclarity-cache");
@@ -82,47 +84,68 @@ async function fetchLibrary(version: string): Promise<string> {
   return src;
 }
 
-// Evaluate the library into the realm. We build the command queue ourselves (do NOT replay the real
-// 707-byte bootstrap, whose dup-guard/c.gif logic we manage separately), then inject the library so
-// queue.process() drains it. One realm = one clarity instance.
-function evaluate(window: DOMWindow, source: string): void {
-  const script = window.document.createElement("script");
-  script.textContent = source;
-  window.document.body.appendChild(script);
-}
-
-// DEFAULT: reproducible — a pinned version's bytes never change mid-run.
-export class PinnedCdn implements ClarityBundleProvider {
-  constructor(private readonly version: string) {}
-  resolveVersion(): Promise<string> {
-    return Promise.resolve(this.version);
-  }
+// Shared provider behavior: evaluate the library into the realm (build the command queue ourselves —
+// do NOT replay the real 707-byte bootstrap whose dup-guard/c.gif logic we manage separately — then
+// inject the library so queue.process() drains it) and fetch from the cached CDN. One realm = one
+// clarity instance. Subclasses differ only in how the version is resolved + how they describe()
+// themselves.
+abstract class BaseProvider implements ClarityBundleProvider {
+  abstract resolveVersion(projectId: string): Promise<string>;
+  abstract describe(): { source: ProviderSource; version: string };
   fetchLibrary(version: string): Promise<string> {
     return fetchLibrary(version);
   }
-  evaluate = evaluate;
+  evaluate(window: DOMWindow, source: string): void {
+    const script = window.document.createElement("script");
+    script.textContent = source;
+    window.document.body.appendChild(script);
+  }
+}
+
+// DEFAULT: reproducible — a pinned version's bytes never change mid-run.
+export class PinnedCdn extends BaseProvider {
+  constructor(private readonly version: string) {
+    super();
+  }
+  resolveVersion(): Promise<string> {
+    return Promise.resolve(this.version);
+  }
   describe(): { source: "pinned"; version: string } {
     return { source: "pinned", version: this.version };
   }
 }
 
 // Opt-in: bleeding edge. Detects the version Microsoft currently serves. Never silently falls back.
-export class LiveCdn implements ClarityBundleProvider {
+export class LiveCdn extends BaseProvider {
   private detected: string | undefined;
   async resolveVersion(projectId: string): Promise<string> {
-    const res = await request(TAG_URL(projectId));
-    const body = await res.body.text();
-    if (res.statusCode !== 200) throw new VersionFetchFailed(`tag fetch for ${projectId} returned ${res.statusCode}`, body);
-    const m = VERSION_RE.exec(body);
-    if (!m?.[1]) throw new VersionFetchFailed(`could not parse clarity version from tag for ${projectId}`, body);
-    this.detected = m[1];
-    return m[1];
+    const { version } = await parseTagConfig(projectId); // reuse the one tag-fetch+parse contract
+    this.detected = version;
+    return version;
   }
-  fetchLibrary(version: string): Promise<string> {
-    return fetchLibrary(version);
-  }
-  evaluate = evaluate;
   describe(): { source: "live"; version: string } {
     return { source: "live", version: this.detected ?? "unresolved" };
+  }
+}
+
+// Last resort / offline: run a locally-provided clarity.js file (e.g. a self-built fork output),
+// byte-for-byte reproducible with no network. The caller owns the version label it represents.
+export class LocalFork extends BaseProvider {
+  constructor(
+    private readonly filePath: string,
+    private readonly version = "fork",
+  ) {
+    super();
+  }
+  resolveVersion(): Promise<string> {
+    return Promise.resolve(this.version);
+  }
+  override async fetchLibrary(): Promise<string> {
+    const src = await readFile(this.filePath, "utf8");
+    if (!isValidLibrary(src)) throw new VersionFetchFailed(`local clarity.js at ${this.filePath} failed validation (len=${src.length})`);
+    return src;
+  }
+  describe(): { source: "fork"; version: string } {
+    return { source: "fork", version: this.version };
   }
 }

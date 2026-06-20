@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseTagBody, isValidLibrary } from "../src/index.js";
+import { parseTagBody, isValidLibrary, LocalFork, VersionFetchFailed } from "../src/index.js";
 
 describe("parseTagBody", () => {
   it("parses the real double-quoted JSON tag shape", () => {
@@ -37,5 +40,24 @@ describe("isValidLibrary (cache-poisoning guard)", () => {
   });
   it("accepts a plausible full library", () => {
     expect(isValidLibrary(`/* clarity-js v0.8.65 */ ${"a".repeat(20000)} clarity`)).toBe(true);
+  });
+});
+
+describe("LocalFork provider", () => {
+  const dir = mkdtempSync(join(tmpdir(), "uc-fork-"));
+
+  it("loads a valid local library and describes itself as fork", async () => {
+    const file = join(dir, "good.js");
+    writeFileSync(file, `/* clarity */ ${"a".repeat(20000)}`);
+    const p = new LocalFork(file, "0.8.65-local");
+    expect(await p.resolveVersion()).toBe("0.8.65-local");
+    expect((await p.fetchLibrary()).length).toBeGreaterThan(10000);
+    expect(p.describe()).toEqual({ source: "fork", version: "0.8.65-local" });
+  });
+
+  it("rejects a truncated local library", async () => {
+    const file = join(dir, "bad.js");
+    writeFileSync(file, "clarity");
+    await expect(new LocalFork(file).fetchLibrary()).rejects.toBeInstanceOf(VersionFetchFailed);
   });
 });

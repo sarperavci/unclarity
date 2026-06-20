@@ -73,11 +73,15 @@ function snapshot(): RawCapture {
 }
 /* c8 ignore stop */
 
+const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
+const DEFAULT_WAIT_MS = 500;
+
 export async function capture(opts: CaptureOptions): Promise<BundleManifest> {
   const dev = opts.device ? PRESETS[opts.device] : undefined;
   const mobile = dev ? dev.maxTouchPoints > 0 : false;
-  const viewport = opts.viewport ?? (dev ? { width: dev.screen.width, height: dev.screen.height } : { width: 1280, height: 800 });
+  const viewport = opts.viewport ?? (dev ? { width: dev.screen.width, height: dev.screen.height } : DEFAULT_VIEWPORT);
   const userAgent = opts.userAgent ?? dev?.userAgent;
+  const waitUntil = opts.waitUntil ?? "networkidle";
   const browser: Browser = await chromium.launch({ headless: true });
   try {
     const context: BrowserContext = await browser.newContext({
@@ -87,12 +91,24 @@ export async function capture(opts: CaptureOptions): Promise<BundleManifest> {
       ...(opts.storageState ? { storageState: opts.storageState } : {}),
     });
     const page = await context.newPage();
-    await page.goto(opts.url, { waitUntil: opts.waitUntil ?? "networkidle" });
+    await page.goto(opts.url, { waitUntil });
     for (const step of opts.steps ?? []) {
-      if (step.action === "click" && step.selector) await page.click(step.selector);
-      else if (step.action === "fill" && step.selector) await page.fill(step.selector, step.text ?? "");
-      else if (step.action === "goto" && step.url) await page.goto(step.url, { waitUntil: opts.waitUntil ?? "networkidle" });
-      else if (step.action === "wait") await page.waitForTimeout(step.ms ?? 500);
+      switch (step.action) {
+        case "click":
+          if (step.selector) await page.click(step.selector);
+          break;
+        case "fill":
+          if (step.selector) await page.fill(step.selector, step.text ?? "");
+          break;
+        case "goto":
+          if (step.url) await page.goto(step.url, { waitUntil });
+          break;
+        case "wait":
+          await page.waitForTimeout(step.ms ?? DEFAULT_WAIT_MS);
+          break;
+        default:
+          throw new Error(`unclarity capture: unknown step action ${String((step as { action: string }).action)}`);
+      }
     }
     const raw = (await page.evaluate(snapshot)) as RawCapture;
     const manifest: BundleManifest = {

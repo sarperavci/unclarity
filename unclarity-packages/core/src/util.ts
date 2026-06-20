@@ -10,3 +10,5 @@ export function force<T extends object>(obj: T, key: PropertyKey, value: unknown
 }
 
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+export const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));

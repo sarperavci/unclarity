@@ -1,6 +1,6 @@
 import type { DOMWindow } from "jsdom";
 import { request, type Dispatcher } from "undici";
-import { force } from "./util.js";
+import { force, errMsg } from "./util.js";
 
 export interface UploadRecord {
   via: "xhr" | "beacon";
@@ -89,7 +89,7 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
         } catch (err) {
           this.status = 0;
           this.readyState = 4;
-          log.push({ via: "xhr", status: 0, bytes: 0, ms: Math.round(performance.now() - t0), gzip: false, error: err instanceof Error ? err.message : String(err) });
+          log.push({ via: "xhr", status: 0, bytes: 0, ms: Math.round(performance.now() - t0), gzip: false, error: errMsg(err) });
         }
         this.onreadystatechange?.();
         this.onload?.();
@@ -112,7 +112,7 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
         await res.body.text();
         log.push({ via: "beacon", status: res.statusCode, bytes: payload.length, ms: Math.round(performance.now() - t0), gzip: false });
       } catch (err) {
-        log.push({ via: "beacon", status: 0, bytes: payload.length, ms: Math.round(performance.now() - t0), gzip: false, error: err instanceof Error ? err.message : String(err) });
+        log.push({ via: "beacon", status: 0, bytes: payload.length, ms: Math.round(performance.now() - t0), gzip: false, error: errMsg(err) });
       }
     });
     return true;

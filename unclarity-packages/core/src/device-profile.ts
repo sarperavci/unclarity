@@ -137,40 +137,47 @@ export function applyProfile(window: DOMWindow, profile: DeviceProfile): void {
 }
 
 const CHROME_VERSION = "132";
-const CHROME_BRANDS: UaBrand[] = [
-  { brand: "Google Chrome", version: CHROME_VERSION },
-  { brand: "Chromium", version: CHROME_VERSION },
-  { brand: "Not_A Brand", version: "24" },
-];
+const NOT_A_BRAND: UaBrand = { brand: "Not_A Brand", version: "24" };
 
-const EDGE_VERSION = "132";
-const EDGE_BRANDS: UaBrand[] = [
-  { brand: "Microsoft Edge", version: EDGE_VERSION },
-  { brand: "Chromium", version: EDGE_VERSION },
-  { brand: "Not_A Brand", version: "24" },
-];
-const PIXEL_BRANDS: UaBrand[] = [
-  { brand: "Google Chrome", version: CHROME_VERSION },
-  { brand: "Chromium", version: CHROME_VERSION },
-  { brand: "Not_A Brand", version: "24" },
-];
+// A Chromium GREASE brand list: the engine's own brand + Chromium + the GREASE placeholder.
+function chromiumBrands(brand: string, version: string): UaBrand[] {
+  return [{ brand, version }, { brand: "Chromium", version }, { ...NOT_A_BRAND }];
+}
 
-export const PRESETS: Record<string, DeviceProfile> = {
-  "win11-edge": {
-    id: "win11-edge",
-    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${EDGE_VERSION}.0.0.0 Safari/537.36 Edg/${EDGE_VERSION}.0.0.0`,
+// Windows-desktop Chromium profiles (Chrome/Edge) share everything but UA, brands, and core count.
+function winDesktopChromium(opts: { id: string; userAgent: string; brand: string; version: string; hardwareConcurrency: number }): DeviceProfile {
+  return {
+    id: opts.id,
+    userAgent: opts.userAgent,
     platform: "Win32",
     vendor: "Google Inc.",
     language: "en-US",
     languages: ["en-US", "en"],
-    hardwareConcurrency: 12,
+    hardwareConcurrency: opts.hardwareConcurrency,
     maxTouchPoints: 0,
     deviceMemory: 8,
     screen: { width: 1920, height: 1080, colorDepth: 24 },
     devicePixelRatio: 1,
     timezone: "America/New_York",
-    uaData: { brands: EDGE_BRANDS, mobile: false, platform: "Windows", platformVersion: "15.0.0", uaFullVersion: `${EDGE_VERSION}.0.0.0`, architecture: "x86", bitness: "64" },
-  },
+    uaData: { brands: chromiumBrands(opts.brand, opts.version), mobile: false, platform: "Windows", platformVersion: "15.0.0", uaFullVersion: `${opts.version}.0.0.0`, architecture: "x86", bitness: "64" },
+  };
+}
+
+export const PRESETS: Record<string, DeviceProfile> = {
+  "win11-edge": winDesktopChromium({
+    id: "win11-edge",
+    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36 Edg/${CHROME_VERSION}.0.0.0`,
+    brand: "Microsoft Edge",
+    version: CHROME_VERSION,
+    hardwareConcurrency: 12,
+  }),
+  "win11-chrome": winDesktopChromium({
+    id: "win11-chrome",
+    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`,
+    brand: "Google Chrome",
+    version: CHROME_VERSION,
+    hardwareConcurrency: 8,
+  }),
   "iphone15-safari": {
     id: "iphone15-safari",
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
@@ -198,30 +205,7 @@ export const PRESETS: Record<string, DeviceProfile> = {
     screen: { width: 412, height: 915, colorDepth: 24 },
     devicePixelRatio: 2.625,
     timezone: "Europe/London",
-    uaData: { brands: PIXEL_BRANDS, mobile: true, platform: "Android", platformVersion: "14.0.0", uaFullVersion: `${CHROME_VERSION}.0.0.0`, architecture: "", bitness: "" },
-  },
-  "win11-chrome": {
-    id: "win11-chrome",
-    userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION}.0.0.0 Safari/537.36`,
-    platform: "Win32",
-    vendor: "Google Inc.",
-    language: "en-US",
-    languages: ["en-US", "en"],
-    hardwareConcurrency: 8,
-    maxTouchPoints: 0,
-    deviceMemory: 8,
-    screen: { width: 1920, height: 1080, colorDepth: 24 },
-    devicePixelRatio: 1,
-    timezone: "America/New_York",
-    uaData: {
-      brands: CHROME_BRANDS,
-      mobile: false,
-      platform: "Windows",
-      platformVersion: "15.0.0",
-      uaFullVersion: `${CHROME_VERSION}.0.0.0`,
-      architecture: "x86",
-      bitness: "64",
-    },
+    uaData: { brands: chromiumBrands("Google Chrome", CHROME_VERSION), mobile: true, platform: "Android", platformVersion: "14.0.0", uaFullVersion: `${CHROME_VERSION}.0.0.0`, architecture: "", bitness: "" },
   },
 };
 

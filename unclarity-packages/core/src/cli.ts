@@ -16,16 +16,24 @@ function emit(obj: unknown): void {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
 }
 
+// Minimal flag parser: --flag value, --flag=value, and the -o alias for --out. A value is only
+// consumed if the next token isn't itself a flag (so a missing value stays "" rather than swallowing
+// the next flag).
 function parseFlags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
+  const take = (key: string, i: number): number => {
+    const nextIsValue = i + 1 < argv.length && !argv[i + 1]!.startsWith("-");
+    out[key] = nextIsValue ? argv[i + 1]! : "";
+    return nextIsValue ? i + 1 : i;
+  };
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a?.startsWith("--")) {
-      out[a.slice(2)] = argv[i + 1] ?? "";
-      i++;
-    } else if (a?.startsWith("-o")) {
-      out.out = argv[i + 1] ?? "";
-      i++;
+    const a = argv[i]!;
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      if (eq !== -1) out[a.slice(2, eq)] = a.slice(eq + 1);
+      else i = take(a.slice(2), i);
+    } else if (a === "-o") {
+      i = take("out", i);
     }
   }
   return out;

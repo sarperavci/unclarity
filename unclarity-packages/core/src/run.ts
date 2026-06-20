@@ -8,6 +8,7 @@ import { runScenario } from "./runner.js";
 import { Rng } from "./prng.js";
 import type { Scenario } from "./scenario.js";
 import { DEFAULT_CLARITY_VERSION } from "./version.js";
+import { errMsg } from "./util.js";
 
 const SESSION_TIMEOUT_MS = 120_000;
 
@@ -84,22 +85,23 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
       ...(req.upload ? { upload: req.upload } : {}),
       ...(dispatcher ? { dispatcher } : {}),
     });
-    // Deterministic/callback mode reports via captured payloads; URL mode via the HTTP log.
-    const countUploads = (): { uploads: number; ok: number } => {
+    // Deterministic/callback mode reports via captured payloads; URL mode via the HTTP log. One
+    // result builder closes over the per-session context so success and error paths can't drift.
+    const result = (verdict: Verdict, error?: string): SessionResult => {
       const uploads = req.deterministic ? session.payloads.length : session.uploadLog.length;
       const ok = req.deterministic ? uploads : session.uploadLog.filter((r) => r.status >= 200 && r.status <= 208).length;
-      return { uploads, ok };
+      return { index, clarityVersion: session.clarityVersion, bundleSource: session.bundleSource, verdict, uploads, ok, durationMs: Math.round(performance.now() - start), ...(egress ? { egress } : {}), ...(error ? { error } : {}) };
     };
     try {
       await runScenario(session, req.scenario, rng);
       await session.end();
-      const { uploads, ok } = countUploads();
-      let verdict: Verdict = ok === uploads && uploads > 0 ? "ok" : "failed";
-      if (verdict === "ok" && geometryMode === "inferred") verdict = "degraded";
-      return { index, clarityVersion: session.clarityVersion, bundleSource: session.bundleSource, verdict, uploads, ok, durationMs: Math.round(performance.now() - start), ...(egress ? { egress } : {}) };
+      const r = result("ok");
+      if (r.verdict === "ok" && r.ok === r.uploads && r.uploads > 0) {
+        return geometryMode === "inferred" ? { ...r, verdict: "degraded" } : r;
+      }
+      return { ...r, verdict: "failed" };
     } catch (err) {
-      const { uploads, ok } = countUploads(); // C7: count payloads even on the error path
-      return { index, clarityVersion: session.clarityVersion, bundleSource: session.bundleSource, verdict: "failed", uploads, ok, durationMs: Math.round(performance.now() - start), error: err instanceof Error ? err.message : String(err), ...(egress ? { egress } : {}) };
+      return result("failed", errMsg(err)); // C7: result() counts payloads even on the error path
     } finally {
       session.close();
     }
@@ -126,7 +128,7 @@ export async function* run(req: RunRequest): AsyncGenerator<SessionResult> {
     const timeout = new Promise<SessionResult>((resolve) => {
       timer = setTimeout(() => resolve(fallback("session timeout", SESSION_TIMEOUT_MS)), SESSION_TIMEOUT_MS);
     });
-    const run = runOne(req, i, provider).catch((err): SessionResult => fallback(err instanceof Error ? err.message : String(err)));
+    const run = runOne(req, i, provider).catch((err): SessionResult => fallback(errMsg(err)));
     active.set(
       i,
       Promise.race([run, timeout]).finally(() => clearTimeout(timer)),
