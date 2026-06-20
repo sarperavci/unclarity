@@ -31,23 +31,39 @@ interface RawCapture {
   dpr: number;
 }
 
-// Runs in the browser: stamp data-uc-id, inline stylesheets, collect per-node geometry, serialize.
+// Runs in the browser: stamp data-uc-id, capture open shadow DOM, inline stylesheets, collect
+// per-node geometry, serialize.
 /* c8 ignore start */
 function snapshot(): RawCapture {
   let counter = 1;
-  const geometry: Record<string, { x: number; y: number; width: number; height: number }> = {};
-  const all = document.documentElement.querySelectorAll("*");
-  const els: Element[] = [document.documentElement, ...Array.from(all)];
+  const geometry: GeometryMap = {};
   const sx = window.scrollX;
   const sy = window.scrollY;
-  for (const el of els) {
-    const id = String(counter++);
-    el.setAttribute("data-uc-id", id);
+  const stamp = (el: Element): void => {
+    el.setAttribute("data-uc-id", String(counter++));
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) {
-      geometry[id] = { x: Math.round(r.left + sx), y: Math.round(r.top + sy), width: Math.round(r.width), height: Math.round(r.height) };
+      geometry[el.getAttribute("data-uc-id") as string] = { x: Math.round(r.left + sx), y: Math.round(r.top + sy), width: Math.round(r.width), height: Math.round(r.height) };
     }
-  }
+  };
+  // Walk a root, stamping + measuring every element; descend into OPEN shadow roots and inline their
+  // content as declarative shadow DOM so it is captured (not silently dropped). Closed roots are
+  // inaccessible. (Replay fidelity of shadow content depends on the runtime's DSD support.)
+  const walk = (root: Element | DocumentFragment): void => {
+    for (const el of Array.from(root.querySelectorAll("*"))) {
+      stamp(el);
+      const shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+      if (shadow) {
+        walk(shadow);
+        const tpl = document.createElement("template");
+        tpl.setAttribute("shadowrootmode", "open");
+        tpl.innerHTML = shadow.innerHTML;
+        el.prepend(tpl);
+      }
+    }
+  };
+  stamp(document.documentElement);
+  walk(document.documentElement);
   // Inline external stylesheets into <style> (verbatim cssText) so jsdom replay needs no network.
   for (const sheet of Array.from(document.styleSheets)) {
     const owner = sheet.ownerNode as Element | null;

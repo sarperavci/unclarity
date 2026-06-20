@@ -9,10 +9,10 @@ import { Rng } from "./prng.js";
 import { VirtualClock } from "./virtual-clock.js";
 import type { LoadedBundle } from "./bundle.js";
 import { installTransport, type UploadRecord } from "./transport.js";
-import type { ClarityBundleProvider, ProviderSource } from "./clarity-provider.js";
+import { DEFAULT_UPLOAD_URL, type ClarityBundleProvider, type ProviderSource } from "./clarity-provider.js";
 import { force, sleep } from "./util.js";
 
-const COLLECT = "https://t.clarity.ms/collect";
+const COLLECT = DEFAULT_UPLOAD_URL;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 const DEFAULT_DOC_HEIGHT = 3000;
 // Upload-batching delay (clarity config.delay). Deterministic mode uses a shorter virtual delay so

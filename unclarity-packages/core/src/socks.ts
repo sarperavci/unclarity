@@ -13,9 +13,11 @@ export function parseSocks(url: string): ParsedSocks {
   const type = u.protocol.startsWith("socks4") ? 4 : 5;
   const proxy: SocksProxy = {
     host: u.hostname,
-    port: Number(u.port) || 1080,
+    port: u.port === "" ? 1080 : Number(u.port), // explicit :0 is preserved, only absent defaults
     type,
-    ...(u.username ? { userId: decodeURIComponent(u.username), password: decodeURIComponent(u.password) } : {}),
+    // Only send credentials when a username is present; send a password only if one was given (an
+    // empty password is sent as no-auth rather than "", which some SOCKS5 servers reject).
+    ...(u.username ? { userId: decodeURIComponent(u.username), ...(u.password ? { password: decodeURIComponent(u.password) } : {}) } : {}),
   };
   return { proxy };
 }

@@ -17,10 +17,17 @@ export interface TransportOptions {
   dispatcher?: Dispatcher;
 }
 
+export interface Transport {
+  log: UploadRecord[];
+  settled: () => Promise<void>;
+}
+
+const UPLOAD_TIMEOUT_MS = 15000; // matches clarity's XHR upload timeout; also bounds the final beacon
+
 // Replaces XMLHttpRequest + navigator.sendBeacon with undici-backed implementations, faithful to
 // data/upload.ts (XHR for non-final, sendBeacon for final). Forwards clarity's own headers, adds the
 // device-profile identity headers + per-session cookie, and serializes uploads in arrival order.
-export function installTransport(window: DOMWindow, opts: TransportOptions): { log: UploadRecord[]; settled: () => Promise<void> } {
+export function installTransport(window: DOMWindow, opts: TransportOptions): Transport {
   const log: UploadRecord[] = [];
   let chain: Promise<unknown> = Promise.resolve();
   const enqueue = (fn: () => Promise<void>): Promise<void> => {
@@ -79,8 +86,8 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
             headers,
             body,
             ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
-            headersTimeout: 15000,
-            bodyTimeout: 15000,
+            headersTimeout: UPLOAD_TIMEOUT_MS,
+            bodyTimeout: UPLOAD_TIMEOUT_MS,
           });
           this.status = res.statusCode;
           this.responseText = await res.body.text();
@@ -108,7 +115,7 @@ export function installTransport(window: DOMWindow, opts: TransportOptions): { l
         // stalled beacon can't make end()→settled() hang forever. (M1: clarity already saw `true`
         // from sendBeacon and won't XHR-fallback, so a failure here is logged as status:0 — a known
         // best-effort loss of the final payload, matching real sendBeacon's fire-and-forget nature.)
-        const res = await request(url, { method: "POST", headers, body: payload, headersTimeout: 15000, bodyTimeout: 15000, ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}) });
+        const res = await request(url, { method: "POST", headers, body: payload, headersTimeout: UPLOAD_TIMEOUT_MS, bodyTimeout: UPLOAD_TIMEOUT_MS, ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}) });
         await res.body.text();
         log.push({ via: "beacon", status: res.statusCode, bytes: payload.length, ms: Math.round(performance.now() - t0), gzip: false });
       } catch (err) {

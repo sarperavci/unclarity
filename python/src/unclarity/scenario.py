@@ -30,9 +30,11 @@ class ScenarioBuilder:
         return self
 
     def build(self) -> dict[str, Any]:
+        """The scenario as a JSON-serializable dict — the canonical wire form."""
         return {"steps": list(self._steps)}
 
     def to_json(self) -> dict[str, Any]:
+        """Alias of build(), for symmetry with the Node builder's toJSON()."""
         return self.build()
 
 

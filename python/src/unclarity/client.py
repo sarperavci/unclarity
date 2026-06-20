@@ -29,6 +29,8 @@ class SessionResult:
 
     @staticmethod
     def from_json(d: dict[str, Any]) -> "SessionResult":
+        # Tolerant by design (forward-compatible across CLI versions). The wire contract itself is
+        # guarded by the schema-parity tests, so unknown/renamed fields surface there, not here.
         return SessionResult(
             index=d.get("index", -1),
             clarity_version=d.get("clarityVersion", ""),
@@ -165,9 +167,10 @@ class Run:
             drained_fully = True
         finally:
             # H6: always reap the child and close pipes, even on early break / GeneratorExit.
-            terminated = False
-            if proc.poll() is None:
-                terminated = True
+            # Only force-terminate when the consumer broke early (stdout not drained). When stdout
+            # reached EOF, the child is exiting on its own — wait() for the real code (never terminate
+            # it just because returncode is momentarily unset, which was a flaky false "terminated").
+            if not drained_fully and proc.poll() is None:
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -179,9 +182,7 @@ class Run:
                 if pipe is not None:
                     pipe.close()
             err = stderr_chunks[0] if stderr_chunks else ""
-            # Only judge the exit code when the child finished on its own. If we killed it
-            # (consumer broke the generator early) its code is meaningless.
-            if drained_fully and not terminated:
+            if drained_fully:
                 _check_exit(code, got_results, err)
 
     def results(self) -> list[SessionResult]:
@@ -223,10 +224,9 @@ class Run:
                     yield result
             drained_fully = True
         finally:
-            # H6: always reap the child, even on early break / GeneratorExit.
-            terminated = False
-            if proc.returncode is None:
-                terminated = True
+            # H6: reap the child. Only force-terminate on an early break (stdout not drained); when
+            # stdout hit EOF the child is finishing on its own — wait() for the real exit code.
+            if not drained_fully and proc.returncode is None:
                 proc.terminate()
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=5)
@@ -236,7 +236,7 @@ class Run:
             code = await proc.wait()
             await drain_task
             err = stderr_buf.decode("utf-8", "replace")
-            if drained_fully and not terminated:
+            if drained_fully:
                 _check_exit(code, got_results, err)  # C2: async honors the exit code too
 
 

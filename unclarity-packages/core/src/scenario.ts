@@ -32,9 +32,11 @@ export class ScenarioBuilder {
     this.steps.push({ type: "type", selector, text });
     return this;
   }
+  /** The scenario as a serializable object — the canonical wire form. */
   build(): Scenario {
     return { steps: [...this.steps] };
   }
+  /** Alias of build() for JSON.stringify() / cross-language symmetry. */
   toJSON(): Scenario {
     return this.build();
   }

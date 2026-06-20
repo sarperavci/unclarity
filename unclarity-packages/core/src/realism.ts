@@ -1,6 +1,20 @@
 import type { Box } from "./geometry.js";
 import type { Rng } from "./prng.js";
 
+// clarity's pointer/scroll dedup grid (pointer.ts 20px/25ms) — paths are generated then decimated to it.
+const DEDUP_MIN_DIST_PX = 20;
+const DEDUP_MIN_TIME_MS = 25;
+// Cursor-path tuning.
+const PATH_STEPS = 24;
+const PATH_JITTER_PX = 1.5; // per-step gaussian wobble
+const PATH_STEP_MEAN_MS = 12; // mean inter-sample delay
+const PATH_STEP_SIGMA = 0.4;
+const PATH_STEP_MIN_MS = 4;
+const CLICK_SPREAD_DIVISOR = 6; // gaussian σ = box size / this, keeps clicks near center
+const TYPING_WPM = 200;
+const TYPING_SIGMA = 0.45;
+const TYPING_MIN_MS = 20;
+
 export interface PathPoint {
   x: number;
   y: number;
@@ -9,7 +23,7 @@ export interface PathPoint {
 
 // clarity decimates pointer moves within 20px/25ms (pointer.ts) — so we generate a continuous-ish
 // path then DECIMATE to that grid. A dense path records MORE robotically, not less.
-export function decimate(points: PathPoint[], minDist = 20, minTime = 25): PathPoint[] {
+export function decimate(points: PathPoint[], minDist = DEDUP_MIN_DIST_PX, minTime = DEDUP_MIN_TIME_MS): PathPoint[] {
   if (points.length === 0) return [];
   const out: PathPoint[] = [points[0]!];
   let last = points[0]!;
@@ -38,16 +52,16 @@ export function decimate(points: PathPoint[], minDist = 20, minTime = 25): PathP
 }
 
 // Human-ish cursor path: eased interpolation with small gaussian jitter, then decimated.
-export function mousePath(from: { x: number; y: number }, to: { x: number; y: number }, rng: Rng, steps = 24): PathPoint[] {
+export function mousePath(from: { x: number; y: number }, to: { x: number; y: number }, rng: Rng, steps = PATH_STEPS): PathPoint[] {
   const raw: PathPoint[] = [];
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2; // easeInOutQuad
-    const jitter = i === 0 || i === steps ? 0 : rng.gaussian(0, 1.5);
+    const jitter = i === 0 || i === steps ? 0 : rng.gaussian(0, PATH_JITTER_PX);
     raw.push({
       x: Math.round(from.x + (to.x - from.x) * ease + jitter),
       y: Math.round(from.y + (to.y - from.y) * ease + jitter),
-      dt: i === 0 ? 0 : Math.max(4, Math.round(rng.logNormal(12, 0.4))),
+      dt: i === 0 ? 0 : Math.max(PATH_STEP_MIN_MS, Math.round(rng.logNormal(PATH_STEP_MEAN_MS, PATH_STEP_SIGMA))),
     });
   }
   return decimate(raw);
@@ -57,8 +71,8 @@ export function mousePath(from: { x: number; y: number }, to: { x: number; y: nu
 export function clickPlacement(box: Box, rng: Rng): { x: number; y: number } {
   // Clamp into [lo, hi]; for degenerate (<=2px) boxes the bounds can invert, so fall back to center.
   const clamp = (v: number, lo: number, hi: number): number => (hi < lo ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
-  const x = rng.gaussian(box.x + box.width / 2, box.width / 6);
-  const y = rng.gaussian(box.y + box.height / 2, box.height / 6);
+  const x = rng.gaussian(box.x + box.width / 2, box.width / CLICK_SPREAD_DIVISOR);
+  const y = rng.gaussian(box.y + box.height / 2, box.height / CLICK_SPREAD_DIVISOR);
   return {
     x: Math.round(clamp(x, box.x + 1, box.x + box.width - 1)),
     y: Math.round(clamp(y, box.y + 1, box.y + box.height - 1)),
@@ -71,9 +85,9 @@ export interface KeyPlan {
 }
 
 // Per-character typing plan with human cadence (~wpm) and occasional longer pauses.
-export function typingPlan(text: string, rng: Rng, wpm = 200): KeyPlan[] {
-  const base = 60000 / (wpm * 5); // ms per char
-  return [...text].map((char) => ({ char, delay: Math.max(20, Math.round(rng.logNormal(base, 0.45))) }));
+export function typingPlan(text: string, rng: Rng, wpm = TYPING_WPM): KeyPlan[] {
+  const base = 60000 / (wpm * 5); // ms per char (5 chars/word convention)
+  return [...text].map((char) => ({ char, delay: Math.max(TYPING_MIN_MS, Math.round(rng.logNormal(base, TYPING_SIGMA))) }));
 }
 
 export type ArchetypeName = "bouncer" | "browser" | "converter" | "rageClicker";

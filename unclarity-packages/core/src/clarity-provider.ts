@@ -9,6 +9,9 @@ const TAG_URL = (projectId: string): string => `https://www.clarity.ms/tag/${pro
 const LIB_URL = (version: string): string => `https://scripts.clarity.ms/${version}/clarity.js`;
 const VERSION_RE = /scripts\.clarity\.ms\/([0-9]+\.[0-9]+\.[0-9]+)\/clarity\.js/;
 
+// Clarity's ingestion endpoint — the single place this URL lives.
+export const DEFAULT_UPLOAD_URL = "https://t.clarity.ms/collect";
+
 export class VersionFetchFailed extends Error {
   constructor(message: string, readonly body?: string) {
     super(message);
@@ -27,7 +30,7 @@ export interface TagConfig {
 // shapes (JSON-object config or inlined IIFE args). Returns null version if it can't be found.
 export function parseTagBody(body: string): { version: string | null } & Omit<TagConfig, "version"> {
   const version = VERSION_RE.exec(body)?.[1] ?? null;
-  const upload = /["']?upload["']?\s*:\s*["']([^"']+)["']/.exec(body)?.[1] ?? "https://t.clarity.ms/collect";
+  const upload = /["']?upload["']?\s*:\s*["']([^"']+)["']/.exec(body)?.[1] ?? DEFAULT_UPLOAD_URL;
   const dobRaw = /["']?dob["']?\s*:\s*([0-9]+)/.exec(body)?.[1];
   const cookiesRaw = /["']?cookies["']?\s*:\s*\[([^\]]*)\]/.exec(body)?.[1] ?? "";
   const cookies = cookiesRaw
