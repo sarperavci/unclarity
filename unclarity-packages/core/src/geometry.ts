@@ -35,6 +35,9 @@ export function installGeometryOracle(window: DOMWindow, opts: GeometryOptions):
   };
 
   let cursorY = 0;
+  // Tags a real browser never returns from elementFromPoint — keep them out of the hit-test list so a
+  // click coordinate can't resolve to a <head>/<script>/<meta> node (M2).
+  const NON_RENDERED = new Set(["HEAD", "META", "SCRIPT", "STYLE", "TITLE", "LINK", "BASE", "NOSCRIPT", "HTML"]);
   const walker = document.createTreeWalker(document.documentElement, window.NodeFilter.SHOW_ELEMENT);
   let node: Node | null = walker.currentNode;
   while (node) {
@@ -47,14 +50,13 @@ export function installGeometryOracle(window: DOMWindow, opts: GeometryOptions):
       box = fallbackBox(el, cursorY);
       cursorY += box.height + 8;
     }
-    geo.set(el, box);
-    ordered.push({ el, box });
+    geo.set(el, box); // every element answers getBoundingClientRect/offset*
+    if (!NON_RENDERED.has(el.tagName)) ordered.push({ el, box }); // but only rendered ones are hit-testable
+    // Strip the join key now that it's recorded — a leaked data-uc-id would be captured by clarity
+    // as a per-node attribute (a synthetic tell). Strip on EVERY element, rendered or not.
+    el.removeAttribute?.("data-uc-id");
     node = walker.nextNode();
   }
-
-  // Strip the join key now that the WeakMap is built — a leaked data-uc-id would be captured by
-  // clarity as a per-node attribute (a synthetic tell).
-  for (const { el } of ordered) el.removeAttribute?.("data-uc-id");
 
   const scrollX = (): number => (window.pageXOffset as number) || 0;
   const scrollY = (): number => (window.pageYOffset as number) || 0;
