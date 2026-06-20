@@ -3,12 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from ._locate import cli_entry, node_binary
 from .scenario import ScenarioBuilder
+
+# asyncio StreamReader default line limit is 64 KiB; a single result line can exceed that.
+_STREAM_LIMIT = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -26,16 +30,23 @@ class SessionResult:
     @staticmethod
     def from_json(d: dict[str, Any]) -> "SessionResult":
         return SessionResult(
-            index=d["index"],
+            index=d.get("index", -1),
             clarity_version=d.get("clarityVersion", ""),
             bundle_source=d.get("bundleSource", ""),
-            verdict=d["verdict"],
+            verdict=d.get("verdict", ""),
             uploads=d.get("uploads", 0),
             ok=d.get("ok", 0),
             duration_ms=d.get("durationMs", 0),
             egress=d.get("egress"),
             error=d.get("error"),
         )
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """The final {"type":"done", failed} the CLI emits after all results."""
+
+    failed: int
 
 
 def _build_request(
@@ -76,11 +87,26 @@ def _build_request(
     return req
 
 
+def _check_exit(code: int, got_results: bool, stderr: str) -> None:
+    # 0 = all ok, 1 = some sessions failed (already streamed) OR a crash before any results.
+    if code in (0, 1) and got_results:
+        return
+    if code == 0:
+        return
+    raise RuntimeError(f"unclarity CLI exited {code}: {stderr.strip()}")
+
+
 class Run:
     def __init__(self, node: str, cli: str, request: dict[str, Any]) -> None:
         self._node = node
         self._cli = cli
         self._request = request
+        self._summary: RunSummary | None = None
+
+    @property
+    def summary(self) -> RunSummary | None:
+        """Final summary emitted by the CLI; populated once a stream is fully consumed."""
+        return self._summary
 
     def stream(self) -> Iterator[SessionResult]:
         """Synchronously stream results as each session completes."""
@@ -90,21 +116,57 @@ class Run:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-        assert proc.stdin and proc.stdout
-        proc.stdin.write(json.dumps(self._request))
-        proc.stdin.close()
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            msg = json.loads(line)
-            if msg.get("type") == "result":
-                yield SessionResult.from_json(msg)
-        err = proc.stderr.read() if proc.stderr else ""
-        code = proc.wait()
-        if code not in (0, 1):  # 1 = some sessions failed (results already streamed)
-            raise RuntimeError(f"unclarity CLI exited {code}: {err.strip()}")
+        assert proc.stdin and proc.stdout and proc.stderr
+
+        # H5: drain stderr concurrently so a chatty child can't deadlock us while we read stdout.
+        stderr_chunks: list[str] = []
+        stderr_pipe = proc.stderr
+        drain = threading.Thread(target=lambda: stderr_chunks.append(stderr_pipe.read()), daemon=True)
+        drain.start()
+
+        got_results = False
+        drained_fully = False
+        try:
+            proc.stdin.write(json.dumps(self._request))
+            proc.stdin.close()
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)  # stdout carries only JSON; tolerate stray non-JSON
+                except json.JSONDecodeError:
+                    continue
+                kind = msg.get("type")
+                if kind == "result":
+                    got_results = True
+                    yield SessionResult.from_json(msg)
+                elif kind == "done":
+                    self._summary = RunSummary(failed=int(msg.get("failed", 0)))
+            drained_fully = True
+        finally:
+            # H6: always reap the child and close pipes, even on early break / GeneratorExit.
+            terminated = False
+            if proc.poll() is None:
+                terminated = True
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            code = proc.wait()
+            drain.join(timeout=5)
+            for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                if pipe is not None:
+                    pipe.close()
+            err = stderr_chunks[0] if stderr_chunks else ""
+            # Only judge the exit code when the child finished on its own. If we killed it
+            # (consumer broke the generator early) its code is meaningless.
+            if drained_fully and not terminated:
+                _check_exit(code, got_results, err)
 
     def results(self) -> list[SessionResult]:
         return list(self.stream())
@@ -118,18 +180,57 @@ class Run:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=_STREAM_LIMIT,  # S1: large result lines exceed the 64 KiB default
         )
-        assert proc.stdin and proc.stdout
-        proc.stdin.write(json.dumps(self._request).encode())
-        proc.stdin.close()
-        async for raw in proc.stdout:
-            line = raw.decode().strip()
-            if not line:
-                continue
-            msg = json.loads(line)
-            if msg.get("type") == "result":
-                yield SessionResult.from_json(msg)
-        await proc.wait()
+        assert proc.stdin and proc.stdout and proc.stderr
+
+        # H5: drain stderr concurrently in a background task.
+        stderr_buf = bytearray()
+        stdout = proc.stdout
+        stderr = proc.stderr
+
+        async def _drain() -> None:
+            async for chunk in stderr:
+                stderr_buf.extend(chunk)
+
+        drain_task = asyncio.create_task(_drain())
+
+        got_results = False
+        drained_fully = False
+        try:
+            proc.stdin.write(json.dumps(self._request).encode())
+            proc.stdin.close()
+            async for raw in stdout:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                kind = msg.get("type")
+                if kind == "result":
+                    got_results = True
+                    yield SessionResult.from_json(msg)
+                elif kind == "done":
+                    self._summary = RunSummary(failed=int(msg.get("failed", 0)))
+            drained_fully = True
+        finally:
+            # H6: always reap the child, even on early break / GeneratorExit.
+            terminated = False
+            if proc.returncode is None:
+                terminated = True
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    if proc.returncode is None:
+                        proc.kill()
+            code = await proc.wait()
+            await drain_task
+            err = stderr_buf.decode("utf-8", "replace")
+            if drained_fully and not terminated:
+                _check_exit(code, got_results, err)  # C2: async honors the exit code too
 
 
 class Unclarity:
