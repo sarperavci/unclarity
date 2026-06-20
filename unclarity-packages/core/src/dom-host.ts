@@ -5,6 +5,7 @@ import { applyProfile, profileHeaders } from "./device-profile.js";
 import { installShims, assertReady, setScroll } from "./shims.js";
 import { installGeometryOracle, type GeometryMap } from "./geometry.js";
 import { Rng } from "./prng.js";
+import { VirtualClock } from "./virtual-clock.js";
 import type { LoadedBundle } from "./bundle.js";
 import { installTransport, type UploadRecord } from "./transport.js";
 import type { ClarityBundleProvider } from "./clarity-provider.js";
@@ -30,12 +31,19 @@ export interface SessionOptions {
   clarityConfig?: Record<string, unknown>;
   // When set, crypto.getRandomValues is seeded so userId/sessionId are reproducible for this seed.
   seed?: number;
+  // Full determinism: virtual clock + seeded randomness + uncompressed callback upload, so the same
+  // seed yields byte-identical payloads (see `payloads`). Requires `seed`. Implies no real network.
+  deterministic?: boolean;
 }
 
 export interface Session {
   readonly clarityVersion: string;
   readonly bundleSource: "pinned" | "live" | "fork";
   readonly uploadLog: UploadRecord[];
+  /** Raw encoded payload strings captured in deterministic/callback mode (empty in URL mode). */
+  readonly payloads: string[];
+  /** Advance time: virtual clock in deterministic mode, real sleep otherwise. */
+  advance(ms: number): Promise<void>;
   move(selector: string): void;
   /** Dispatch a mousemove at raw viewport coordinates (used to play realism paths). */
   moveTo(x: number, y: number): void;
@@ -64,9 +72,19 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
   const dom = new JSDOM(html, { url: opts.url, runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc });
   const { window } = dom;
 
+  if (opts.deterministic && opts.seed === undefined) throw new Error("unclarity: deterministic mode requires a seed");
+
   installShims(window);
   applyProfile(window, opts.profile);
   installGeometryOracle(window, { viewport, docHeight, ...(geometry ? { byId: geometry } : {}) });
+
+  // Deterministic mode: virtual clock + no async compression (CompressionStream removed so
+  // compress() short-circuits synchronously) so payloads are reproducible and free of real async.
+  const clock = opts.deterministic ? new VirtualClock(opts.seed ?? 0) : undefined;
+  if (clock) {
+    Reflect.deleteProperty(window as unknown as Record<string, unknown>, "CompressionStream");
+    clock.install(window);
+  }
 
   // Seeded identity: deterministic getRandomValues → reproducible userId/sessionId for a given seed.
   // crypto.subtle (identify SHA-256) stays real.
@@ -92,10 +110,15 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
 
   assertReady(window);
 
+  // Deterministic mode captures payloads via a callback (no real network); else default to ingestion.
+  const payloads: string[] = [];
+  const upload = clock ? (p: string) => void payloads.push(p) : (opts.upload ?? COLLECT);
+  const tick = clock ? (ms: number) => clock.advance(ms) : (ms: number) => sleep(ms);
+
   const startConfig: Record<string, unknown> = {
     projectId: opts.projectId,
-    upload: opts.upload ?? COLLECT,
-    delay: 200,
+    upload,
+    delay: clock ? 50 : 200,
     lean: false,
     content: true,
     track: true,
@@ -110,7 +133,7 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
   clarity("start", startConfig);
 
   opts.provider.evaluate(window, source);
-  await sleep(300); // allow discover + initial scheduled tasks to run
+  await tick(300); // allow discover + initial scheduled tasks (+ first upload) to run
 
   const stamp = <T extends Event>(ev: T): T => {
     // jsdom stamps synthetic events with an absolute epoch timeStamp; clarity's time() expects it
@@ -139,6 +162,8 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
     clarityVersion: version,
     bundleSource: describe.source,
     uploadLog: transport.log,
+    payloads,
+    advance: tick,
     move(selector) {
       const el = require(selector);
       const { x, y } = center(el);
@@ -174,9 +199,9 @@ export async function createSession(opts: SessionOptions): Promise<Session> {
     async end() {
       // Let scheduled encodes + the batched upload timer (config.delay) run BEFORE the final flush,
       // otherwise stop() flushes before late events (e.g. clicks) are encoded.
-      await sleep(400);
+      await tick(400);
       fire(window, new window.Event("pagehide"));
-      await sleep(300);
+      await tick(300);
       await transport.settled();
     },
     close() {

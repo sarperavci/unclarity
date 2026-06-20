@@ -18,5 +18,6 @@ export { run } from "./run.js";
 export type { RunRequest, SessionResult, Verdict, ProxyConfig } from "./run.js";
 export { socksDispatcher, parseSocks } from "./socks.js";
 export { Rng } from "./prng.js";
+export { VirtualClock } from "./virtual-clock.js";
 export { decimate, mousePath, clickPlacement, typingPlan, pickArchetype, ARCHETYPES } from "./realism.js";
 export type { PathPoint, KeyPlan, ArchetypeName } from "./realism.js";

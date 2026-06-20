@@ -87,8 +87,18 @@ cookie/dob config for fidelity.
 ## Determinism & identity
 
 Pass `seed` to make a session's **userId/sessionId reproducible** (seeded `crypto.getRandomValues`;
-`crypto.subtle` stays real). The PRNG and realism generators are fully deterministic. Full
-session-level *byte* determinism (timestamps) still needs a VirtualClock — planned.
+`crypto.subtle` stays real). Add **`deterministic: true`** for **full byte-level determinism**: a
+VirtualClock virtualizes `setTimeout`/`performance`/`Date`/`Math.random`, payloads are captured via an
+uncompressed callback (no real network), so the **same seed yields byte-identical payloads** run to
+run (`session.payloads`). Deterministic runs are also fast — virtual time means no real waits.
+
+```ts
+const s = await createSession({ projectId, url, html, profile: preset("win11-chrome"),
+  provider: new PinnedCdn("0.8.65"), seed: 42, deterministic: true });
+await runScenario(s, sc, new Rng(42));
+await s.end();
+s.payloads; // identical across runs with seed 42
+```
 
 ## Proxies
 
@@ -106,6 +116,7 @@ gives each session a different egress IP.
 
 - Capture replicates a *captured/authored state* at the chosen viewport — not arbitrary
   post-scroll/lazy geometry. Multi-keyframe SPA capture is a future extension.
-- Full byte-identical session determinism awaits a VirtualClock (timestamps vary per run today).
+- `deterministic: true` runs use a callback sink (no real upload) — pair it with a normal run when you
+  also want the session to land in the dashboard.
 
 This is a testing/debugging tool for your **own** Clarity projects. Keep volume modest.

@@ -29,6 +29,7 @@ export interface RunRequest {
   clarity?: { source?: "pinned" | "live"; version?: string };
   upload?: string; // override (e.g. local collector for tests)
   network?: { proxy?: ProxyConfig };
+  deterministic?: boolean; // virtual clock + seeded randomness → reproducible payloads
 }
 
 export type Verdict = "ok" | "degraded" | "failed";
@@ -75,6 +76,7 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
     profile: profileObj,
     provider,
     seed: sessionSeed,
+    ...(req.deterministic ? { deterministic: true } : {}),
     ...(bundle ? { bundle } : {}),
     ...(req.html ? { html: req.html } : {}),
     ...(req.upload ? { upload: req.upload } : {}),
@@ -83,8 +85,9 @@ async function runOne(req: RunRequest, index: number, provider: ClarityBundlePro
   try {
     await runScenario(session, req.scenario, rng);
     await session.end();
-    const uploads = session.uploadLog.length;
-    const ok = session.uploadLog.filter((r) => r.status >= 200 && r.status <= 208).length;
+    // Deterministic/callback mode reports via captured payloads; URL mode via the HTTP log.
+    const uploads = req.deterministic ? session.payloads.length : session.uploadLog.length;
+    const ok = req.deterministic ? uploads : session.uploadLog.filter((r) => r.status >= 200 && r.status <= 208).length;
     let verdict: Verdict = ok === uploads && uploads > 0 ? "ok" : "failed";
     if (verdict === "ok" && geometryMode === "inferred") verdict = "degraded";
     return {

@@ -3,7 +3,8 @@ import { force } from "./util.js";
 
 // Globals clarity.js captures at MODULE-EVAL time (compress.ts, task.ts). They MUST exist on the
 // realm window before the library is evaluated, else capture silently degrades.
-const REQUIRED_GLOBALS = ["MutationObserver", "CompressionStream", "crypto", "requestIdleCallback", "performance"] as const;
+// CompressionStream is intentionally NOT required: callback/deterministic mode runs uncompressed.
+const REQUIRED_GLOBALS = ["MutationObserver", "crypto", "requestIdleCallback", "performance"] as const;
 
 // Install the minimum environment for Microsoft's clarity.js to run in a jsdom realm.
 // Order matters: call this BEFORE evaluating the library bundle.
