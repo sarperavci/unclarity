@@ -36,11 +36,13 @@ jobs:
               exit 0
             fi
             git push -u origin "$BRANCH"
+            gh label create upstream-sync --color 1d76db --force >/dev/null 2>&1 || true
             gh pr create --title "Sync upstream microsoft/clarity" \
               --body "Automated weekly merge of upstream/master. unclarity packages are additive; review the pristine packages/ delta." \
               --label upstream-sync
           else
             git merge --abort
+            gh label create upstream-sync --color 1d76db --force >/dev/null 2>&1 || true
             gh issue create --title "⚠️ upstream sync conflict" --label upstream-sync \
               --body "Weekly upstream merge hit a conflict and was aborted. Resolve manually: \`git fetch upstream && git merge upstream/master\`."
             exit 1

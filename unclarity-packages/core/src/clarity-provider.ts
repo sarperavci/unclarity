@@ -68,23 +68,52 @@ export function isValidLibrary(src: string): boolean {
   return src.length > 10_000 && src.includes("clarity");
 }
 
-async function fetchLibrary(version: string): Promise<string> {
+const FETCH_RETRIES = 3;
+const FETCH_BACKOFF_MS = 200;
+
+// Concurrent sessions share one fetch per version: dedups the cold-cache stampede (count>1) into a
+// single CDN request and prevents two sessions racing to populate the cache.
+const inflight = new Map<string, Promise<string>>();
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+async function fetchFromCdn(version: string): Promise<string> {
   const cached = join(CACHE_DIR, `clarity-${version}.js`);
   if (existsSync(cached)) {
     const existing = await readFile(cached, "utf8");
     if (isValidLibrary(existing)) return existing;
     // poisoned cache (partial/empty) — fall through and re-fetch
   }
-  const res = await request(LIB_URL(version));
-  if (res.statusCode !== 200) throw new VersionFetchFailed(`clarity.js ${version} fetch returned ${res.statusCode}`);
-  const src = await res.body.text();
-  if (!isValidLibrary(src)) throw new VersionFetchFailed(`fetched clarity.js ${version} failed validation (len=${src.length})`);
-  await mkdir(CACHE_DIR, { recursive: true });
-  // Atomic write: stage to a unique temp file then rename, so a crash never leaves a partial cache.
-  const tmp = `${cached}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, src);
-  await rename(tmp, cached);
-  return src;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < FETCH_RETRIES; attempt++) {
+    if (attempt > 0) await sleep(FETCH_BACKOFF_MS * attempt);
+    try {
+      const res = await request(LIB_URL(version));
+      if (res.statusCode !== 200) {
+        await res.body.dump();
+        throw new VersionFetchFailed(`clarity.js ${version} fetch returned ${res.statusCode}`);
+      }
+      const src = await res.body.text();
+      if (!isValidLibrary(src)) throw new VersionFetchFailed(`fetched clarity.js ${version} failed validation (len=${src.length})`);
+      await mkdir(CACHE_DIR, { recursive: true });
+      // Atomic write: stage to a unique temp file then rename, so a crash never leaves a partial cache.
+      const tmp = `${cached}.${process.pid}.${Date.now()}.${attempt}.tmp`;
+      await writeFile(tmp, src);
+      await rename(tmp, cached);
+      return src;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new VersionFetchFailed(`clarity.js ${version} fetch failed: ${String(lastErr)}`);
+}
+
+function fetchLibrary(version: string): Promise<string> {
+  const existing = inflight.get(version);
+  if (existing) return existing;
+  const p = fetchFromCdn(version).finally(() => inflight.delete(version));
+  inflight.set(version, p);
+  return p;
 }
 
 // Shared provider behavior: evaluate the library into the realm (build the command queue ourselves —

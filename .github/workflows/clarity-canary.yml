@@ -29,8 +29,13 @@ jobs:
         working-directory: unclarity-packages/core
         continue-on-error: true
         run: |
+          # GitHub runs this with `bash -e`; the canary intentionally exits 10/1, so disable errexit
+          # around it or the script aborts before we can capture the code.
+          set +e
           node dist/cli.js canary --project "${{ secrets.CLARITY_PROJECT_ID }}" > canary.json
-          echo "code=$?" >> "$GITHUB_OUTPUT"
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
           cat canary.json
 
       - name: Bump pinned version (newer & compatible)
@@ -48,6 +53,7 @@ jobs:
           git add src/version.ts
           git commit -m "Bump pinned clarity.js to $NEW (canary: compatible)"
           git push -u origin "$BRANCH"
+          gh label create clarity-compatible --color 0e8a16 --force >/dev/null 2>&1 || true
           gh pr create --title "Bump pinned clarity.js to $NEW" \
             --body "The compatibility canary detected live clarity.js **$NEW** and it PASSES the contract test (payloads decode). Auto-bump of \`DEFAULT_CLARITY_VERSION\`.$(printf '\n\n```json\n')$(cat canary.json)$(printf '\n```\n')" \
             --label clarity-compatible
@@ -58,6 +64,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh label create clarity-drift --color b60205 --force >/dev/null 2>&1 || true
           gh issue create --title "⚠️ clarity-drift: live clarity.js is incompatible" \
             --label clarity-drift \
             --body "The compatibility canary FAILED the contract test against the live clarity.js. We did **not** auto-degrade. Investigate and fix.$(printf '\n\n```json\n')$(cat canary.json)$(printf '\n```\n')"

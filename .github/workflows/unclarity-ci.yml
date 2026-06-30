@@ -34,15 +34,18 @@ jobs:
 
   capture-typecheck:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: unclarity-packages/capture
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
+      # capture imports @unclarity/core (file:../core), whose exports point at src, so tsc
+      # deep-checks ../core/src — install core's deps first or jsdom/undici/socks won't resolve.
+      - run: npm ci || npm install
+        working-directory: unclarity-packages/core
       - run: npm install
+        working-directory: unclarity-packages/capture
       - run: npx tsc --noEmit
+        working-directory: unclarity-packages/capture
 
   python:
     runs-on: ubuntu-latest
