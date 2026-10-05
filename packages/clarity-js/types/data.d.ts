@@ -78,6 +78,7 @@ export const enum Event {
     Focus = 50,
     CustomElement = 51,
     Chat = 52,
+    PointerDown = 53,
 
     // Apps specific events
     WebViewDiscover = 100,
@@ -141,6 +142,7 @@ export const enum Metric {
     InteractionNextPaint = 37,
     HistoryClear = 38,
     AngularZone = 39,
+    WebMcpDetected = 40,
     // 200-300 reserved for internal use
 }
 
