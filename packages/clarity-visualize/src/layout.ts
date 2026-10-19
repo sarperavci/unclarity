@@ -142,10 +142,13 @@ export class LayoutHelper {
         this.primaryHtmlNodeId = null;
     }
 
-    public get = (hash) => {
+    public get = (hash: string, silent: boolean = false): HTMLElement => {
         if (hash in this.hashMapBeta && this.hashMapBeta[hash].isConnected) {
             return this.hashMapBeta[hash];
         } else if (hash in this.hashMapAlpha && this.hashMapAlpha[hash].isConnected) {
+            // Beta lookup missed but the Alpha (fallback) selector resolved the element.
+            // Surface this so we can measure how often Alpha is still required before retiring it.
+            if (!silent && this.state.options.onalphaFallback) { this.state.options.onalphaFallback(hash); }
             return this.hashMapAlpha[hash];
         }
         return null;
@@ -153,8 +156,8 @@ export class LayoutHelper {
 
     private addToHashMap = (data: DecodedLayout.DomData, parent: Node) => {
         // In case of selector collision, prefer the first inserted node
-        this.hashMapAlpha[data.hashAlpha] = this.get(data.hashAlpha) || parent;
-        this.hashMapBeta[data.hashBeta] = this.get(data.hashBeta) || parent;
+        this.hashMapAlpha[data.hashAlpha] = this.get(data.hashAlpha, true) || parent;
+        this.hashMapBeta[data.hashBeta] = this.get(data.hashBeta, true) || parent;
     }
 
     private resize = (el: HTMLElement, width: number, height: number): void => {
@@ -305,13 +308,28 @@ export class LayoutHelper {
             let pivot = this.element(node.previous);
             let insert = this.insertAfter;
 
+            if (parent && parent.nodeType === NodeType.COMMENT_NODE) { continue; }
+
             let tag = node.tag;
-            if (tag && tag.indexOf(Layout.Constant.IFramePrefix) === 0) { tag = node.tag.substr(Layout.Constant.IFramePrefix.length); }
+            if (tag && tag.indexOf(Layout.Constant.IFramePrefix) === 0) { tag = node.tag.slice(Layout.Constant.IFramePrefix.length); }
             if (parent === null && node.parent !== null && node.parent > -1 && tag !== "HTML") {
                 // We are referencing a parent for this node that hasn't been created yet. Push it to a list of nodes to
                 // try once we are finished with other nodes within this event. Though we don't require HTML tags to
                 // have a parent as they are typically the root.
                 retryEvent.data.push(node);
+                continue;
+            }
+            let unprefixedTag = tag && tag.indexOf(Layout.Constant.SvgPrefix) === 0 ? tag.slice(Layout.Constant.SvgPrefix.length) : tag;
+            let svgAnimation = tag && tag.indexOf(Layout.Constant.SvgPrefix) === 0 &&
+                ["animate", "animatecolor", "animatemotion", "animatetransform", "set", "discard"]
+                    .indexOf(unprefixedTag.slice(unprefixedTag.lastIndexOf(":") + 1).toLowerCase()) >= 0;
+            // Replay retains recorded SVG attributes rather than letting SVG animations independently rewrite them.
+            if (svgAnimation || (unprefixedTag && unprefixedTag.toUpperCase() === "SCRIPT")) {
+                let placeholder = this.element(node.id);
+                placeholder = placeholder && placeholder.nodeType === NodeType.COMMENT_NODE ?
+                    placeholder : doc.createComment(svgAnimation ? "svg animation" : "script");
+                insert(node, parent, placeholder, pivot);
+                if (node.id) { this.events[node.id] = node; }
                 continue;
             }
             switch (tag) {
@@ -459,13 +477,6 @@ export class LayoutHelper {
                     this.setAttributes(iframeElement, node);
                     insert(node, parent, iframeElement, pivot);
                     break;
-                case "SCRIPT":
-                    {
-                        node.id = -1; // We want to ensure children of script tags are not processed
-                        node.value = null; // We don't want to set any potential script content
-                        this.insertDefaultElement(node, parent, pivot, doc, insert);
-                        break;
-                    }
                 default:
                     this.insertDefaultElement(node, parent, pivot, doc, insert);
                     break;
@@ -679,7 +690,7 @@ export class LayoutHelper {
 
     private isSuspiciousAttribute(name: string, value: string): boolean {
         // Block event handlers entirely
-        if (name.startsWith('on')) {
+        if (name.toLowerCase().startsWith('on')) {
             return true;
         }
         
