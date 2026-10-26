@@ -57,6 +57,7 @@ export function start(): void {
   metric.max(Metric.ClientTimestamp, s.ts);
   metric.max(Metric.Playback, BooleanFlag.False);
   metric.max(Metric.Electron, electron);
+  metric.max(Metric.WebMcpDetected, webMcp() ? BooleanFlag.True : null);
 
   const zone = (window as any)?.[CoreConstant.Zone];
   const isZone = zone && CoreConstant.Symbol in zone;
@@ -98,13 +99,24 @@ export function start(): void {
   track(u);
 }
 
+function webMcp(): boolean {
+  try {
+    const context: unknown = document["modelContext"];
+    return !!context && typeof context === "object";
+  } catch {
+    return false;
+  }
+}
+
 function userAgentData(): void {
   let uaData = navigator["userAgentData"];
   if (uaData && uaData.getHighEntropyValues) {
-    uaData.getHighEntropyValues(["model", "platform", "platformVersion", "uaFullVersion"]).then(ua => {
+    // brands, mobile, and platform are low-entropy and always included in the response per
+    // UA-CH spec §3.1 (https://wicg.github.io/ua-client-hints/#getHighEntropyValues); only high-entropy hints need to be listed.
+    uaData.getHighEntropyValues(["model", "platformVersion"]).then(ua => {
       dimension.log(Dimension.Platform, ua.platform);
       dimension.log(Dimension.PlatformVersion, ua.platformVersion);
-      ua.brands?.forEach(brand => { dimension.log(Dimension.Brand, brand.name + Constant.Tilde + brand.version); });
+      ua.brands?.forEach(brand => { dimension.log(Dimension.Brand, brand.brand + Constant.Tilde + brand.version); });
       dimension.log(Dimension.Model, ua.model);
       metric.max(Metric.Mobile, ua.mobile ? BooleanFlag.True : BooleanFlag.False);
     });
@@ -195,6 +207,7 @@ export function consentv2(consentState: ConsentState = defaultStatus, source: nu
   if (core.active() && consentData.analytics_Storage) {
     config.track = true;
     track(user(), BooleanFlag.True);
+    dimension.log(Dimension.TabId, tab());
     save();
   }
 
@@ -306,7 +319,8 @@ function session(): Session {
       output.session = parts[0];
       output.count = num(parts[2]) + 1;
       output.upgrade = num(parts[3]);
-      output.upload = parts.length >= 6 ? Constant.HTTPS + parts[5] + "/" + parts[4] : Constant.HTTPS + parts[4];
+      output.upload = parts.length >= 6 ? Constant.HTTPS + parts[5] + "/" + parts[4]
+        : parts[4][0] === "/" ? parts[4] : Constant.HTTPS + parts[4];
     }
   }
   return output;
@@ -336,4 +350,3 @@ function user(): User {
   }
   return output;
 }
-
